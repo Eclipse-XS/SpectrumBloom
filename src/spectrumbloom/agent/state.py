@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from langgraph.graph import MessagesState
 
 
-def _replace_or_append(
-    left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None
-) -> list[dict[str, Any]]:
+def _replace_or_append(left: list[Any] | None, right: list[Any] | None) -> list[Any]:
     if right is None:
         return []
     if not left:
@@ -22,7 +20,11 @@ class EDAGraphState(MessagesState):
 
     tool_traces: Annotated[list[dict[str, Any]], _replace_or_append]
     turn_figures: Annotated[list[dict[str, Any]], _replace_or_append]
+    executed_signatures: Annotated[list[str], _replace_or_append]
     retries: int
     step_count: int
     last_error: str | None
+    terminal_error: str | None
+    timed_out: bool
+    status: Literal["success", "failed"]
     final_answer: str

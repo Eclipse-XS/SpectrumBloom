@@ -25,12 +25,18 @@ class UnifiedLLMProvider:
         temperature: float | None = None,
         num_ctx: int | None = None,
         max_tokens: int | None = None,
+        request_timeout_seconds: int | None = None,
     ):
         chosen_provider = (provider or self.settings.llm_provider).lower().strip()
         chosen_model = (model or self.settings.llm_model).strip()
         temp = self.settings.llm_temperature if temperature is None else temperature
         ctx = self.settings.llm_num_ctx if num_ctx is None else num_ctx
         tok_limit = self.settings.llm_max_tokens if max_tokens is None else max_tokens
+        timeout_sec = (
+            self.settings.llm_request_timeout_seconds
+            if request_timeout_seconds is None
+            else request_timeout_seconds
+        )
 
         if chosen_provider == "ollama":
             return ChatOllama(
@@ -40,6 +46,7 @@ class UnifiedLLMProvider:
                 num_ctx=ctx,
                 num_predict=tok_limit,
                 reasoning=self.settings.llm_enable_thinking,
+                client_kwargs={"timeout": float(timeout_sec)},
             )
 
         if chosen_provider == "llamacpp":
@@ -49,7 +56,7 @@ class UnifiedLLMProvider:
                 api_key=api_key or "llamacpp-local",
                 temperature=temp,
                 max_tokens=tok_limit,
-                timeout=self.settings.llm_request_timeout_seconds,
+                timeout=timeout_sec,
             )
 
         if chosen_provider == "openai":
@@ -63,7 +70,7 @@ class UnifiedLLMProvider:
                 "api_key": resolved_key,
                 "temperature": temp,
                 "max_tokens": tok_limit,
-                "timeout": self.settings.llm_request_timeout_seconds,
+                "timeout": timeout_sec,
             }
             if self.settings.openai_base_url:
                 kwargs["base_url"] = self.settings.openai_base_url
@@ -87,6 +94,7 @@ class UnifiedLLMProvider:
                 google_api_key=resolved_key,
                 temperature=temp,
                 max_output_tokens=tok_limit,
+                timeout=timeout_sec,
             )
 
         raise LLMConfigurationError(f"Unsupported LLM provider: '{chosen_provider}'.")

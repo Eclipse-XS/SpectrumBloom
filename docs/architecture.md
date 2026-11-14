@@ -7,12 +7,13 @@ SpectrumBloom is a modular monolith engineered for **local-first, secure, observ
 ```text
 +-------------------------------------------------------------------+
 |                     Streamlit UI (src/spectrumbloom/ui)            |
+|  5-tab studio: Overview -> Auto EDA -> Ask AI -> ML Lab -> Export |
 +---------------------------------+---------------------------------+
-                                  | HTTP / JSON (httpx)
+                                  | HTTP / JSON (httpx + Bearer)
                                   v
 +-------------------------------------------------------------------+
 |                     FastAPI Layer (src/spectrumbloom/api)         |
-|  - Bearer token guard, CORS policy, OTel FastAPI instrumentation  |
+|  - Bearer token guard, CORS policy, prod/host auth validation     |
 +---------------------------------+---------------------------------+
                                   |
                                   v
@@ -23,13 +24,14 @@ SpectrumBloom is a modular monolith engineered for **local-first, secure, observ
          |                 |                 |
          v                 v                 v
 +----------------+ +---------------+ +------------------------------+
-| Repositories   | | Deterministic | | Agentic Engine & Sandbox     |
-| - SessionRepo  | | EDA & ML      | | - LangGraph StateGraph       |
+| Repositories   | | Deterministic | | Agentic Engine & Isolation   |
+| - SessionRepo  | | EDA & ML      | | - LangGraph EDAAgentGraph    |
 |   (Mem / Redis)| | - loader.py   | | - UnifiedLLMProvider         |
-| - DatasetStore | | - profiler.py | |   (Ollama / llama.cpp / Opt) |
-|   (Local / S3) | | - statistics  | | - Fail-Closed CodeSandbox    |
-|                | | - charts.py   | |   (AST + Parquet + JobObj /  |
-|                | | - ml/         | |    POSIX rlimits / Docker)   |
+| - DatasetStore | | - profiler.py | |   (Ollama/llama.cpp/Opt)     |
+|   (Local / S3) | | - statistics  | | - RemoteDockerSandbox client |
+|                | | - charts.py   | |   -> sandbox-executor :9100  |
+|                | | - ml/         | |   -> DockerSandbox (no sock  |
+|                | |               | |      mounted on API host!)   |
 +----------------+ +---------------+ +------------------------------+
 ```
 
@@ -41,27 +43,27 @@ SpectrumBloom is a modular monolith engineered for **local-first, secure, observ
 3. `eda.statistics.compute_statistics` computes missingness co-occurrence, Pearson & Spearman correlations, Cramér's V categorical associations, Shapiro-Wilk / D'Agostino normality tests, IQR / Z-score / robust MAD outliers, `IsolationForest` multivariate anomalies, and Kruskal-Wallis group difference tests.
 4. `eda.charts.build_eda_figures` creates ready-to-render interactive Plotly visualizations.
 
-### 2. Agentic EDA & Self-Repair Loop (`POST /api/v1/sessions/{id}/query`)
-1. `EDAAgentGraph` injects the compact schema & profile summary into the system prompt so small local models (e.g., `qwen3:4b-instruct` at `num_ctx=4096`) do not waste turns guessing column names.
-2. Bound tools:
-   - `python_repl` -> routed to the fail-closed `CodeSandbox`
-   - `get_statistical_summary` -> returns cached deterministic statistical insights
-   - `run_ml_baseline` -> triggers the separate leak-safe `ml/experiments.py` module
+### 2. Agentic EDA & Bounded Repair Loop (`POST /api/v1/sessions/{id}/query`)
+1. `EDAAgentGraph` injects the compact schema & profile summary into the system prompt so small local models (default `qwen3:4b-instruct` at `num_ctx=4096`) ground exact column names without extra discovery turns, and enforces explicit rules against reusing unfiltered profile metrics on conditional/filtered follow-up questions.
+2. Deterministic-first tool suite (`agent/tools.py`, `agent/deterministic_tools.py`):
+   - `get_statistical_summary` -> cached dataset profile, missingness, correlations, outliers, normality, group tests
+   - `aggregate_data` -> deterministic multi-condition filtering (`filters`), `group_by`, `agg_func`, top/bottom sorting
+   - `compute_statistical_test` -> deterministic Pearson/Spearman correlation, Shapiro normality, t-test/Mann-Whitney, Kruskal-Wallis, IQR outlier inspection
+   - `create_standard_chart` -> validated histogram, box, bar, scatter, correlation heatmap Plotly specs
+   - `run_ml_baseline` -> separate leak-safe `ml/experiments.py` cross-validated modeling
+   - `python_repl` -> routed to the fail-closed `CodeSandbox` only when deterministic tools cannot satisfy custom logic/charts
 3. If native `tool_calls` are omitted by a smaller GGUF backend, `extract_tool_calls_with_fallback` parses `<tool_call>` XML payloads, bare/`json` tool-call blocks, or ````python```` fenced blocks.
-4. Sandbox errors trigger bounded self-repair retries (`MAX_REPAIR_RETRIES = 2`).
+4. Configurable `LLM_TIMEOUT_SECONDS` enforces bounded inference wait times (`LLMTimeoutError`), while invalid code/tool errors trigger bounded self-repair retries (`MAX_REPAIR_RETRIES = 2`, `MAX_TOOL_STEPS = 6`), explicit `FIGURES_GENERATED` accounting, and preserved failure states rather than fabricated conclusions.
 5. Every turn is scored by `eval_service.evaluate_turn_deterministically` and traced via OpenTelemetry spans/metrics (plus optional Langfuse callbacks).
 
 ### 3. Fail-Closed Code Sandbox (`sandbox/`)
 - **Isolation Tiers (Explicit Boundary Distinction):**
-  - `strict_subprocess` provides **application-level process defense-in-depth** (not OS kernel/container isolation). It reduces risk when Docker/nsjail are unavailable on a local developer workstation, but does **not** replace container namespaces, seccomp, or filesystem mounts.
-  - `docker` (`DockerSandbox` + `Dockerfile.sandbox`) provides **non-privileged container isolation per execution**: `--network=none`, `--read-only`, `--cap-drop=ALL`, `--security-opt=no-new-privileges:true`, `--pids-limit=64`, `--cpus=1`, hard cgroup `--memory`/`--memory-swap`, and ephemeral `/tmp` tmpfs.
-  - `nsjail` (`NsjailSandbox` + `sandbox/nsjail.cfg`) provides optional Linux namespace/rlimit confinement where installed (implemented fail-closed; untested without a native Linux `nsjail` binary).
-  - Neither backend falls back to unrestricted host execution (`SandboxUnavailableError`).
-- **Static AST Gate:** Blocks disallowed imports, dunder attributes, reflection builtins (`getattr`, `eval`, `exec`, `open`), file I/O (`read_*`, `to_csv`, `to_pickle`), and pandas expression evaluation (`df.eval`, `df.query`).
-- **Pickle-Free IPC:** DataFrames cross the execution boundary via PyArrow Parquet (with safe typed JSON fallback), never `pickle`.
-- **Runtime Hardening Inside Runner:**
-  - `python -I` isolated mode with stripped environment variables (`OPENBLAS_NUM_THREADS=1`).
-  - Socket class & DNS resolution replaced with `PermissionError` kill-switches.
-  - Filesystem `open()` restricted strictly to read-only access under `sys.prefix` / `sys.base_prefix`.
-  - **Windows (`strict_subprocess`):** Kernel Job Objects (`JOB_OBJECT_LIMIT_JOB_MEMORY | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS`) enforce memory and process-tree termination; process creation and `AssignProcessToJobObject` failures fail closed (`SandboxUnavailableError`).
-  - **POSIX / Linux (`strict_subprocess`):** `RLIMIT_CPU`, `RLIMIT_FSIZE`, high virtual-arena safety cap `RLIMIT_AS` (allowing OpenBLAS/PyArrow/Plotly shared mappings without virtual-address starvation), process-group `SIGKILL`, and `/proc/<pid>/statm` + child-tree physical RSS watchdog.
+  - `remote` (`RemoteDockerSandbox` -> `sandbox/executor_app.py`, Docker Compose default): Separates the trust boundary over an internal network (`sandbox_internal`) authenticated by `SANDBOX_EXECUTOR_TOKEN` so **`spectrumbloom-api` never mounts `/var/run/docker.sock`**. The executor spawns ephemeral `DockerSandbox` sibling containers.
+  - `docker` (`DockerSandbox` + `Dockerfile.sandbox`): Provides **non-privileged container isolation per execution**: `--network=none`, `--read-only`, `--cap-drop=ALL`, `--security-opt=no-new-privileges:true`, `--user=10001:10001`, `--pids-limit=64`, `--cpus=1`, hard cgroup `--memory`/`--memory-swap`, and ephemeral `/tmp` tmpfs. Python wheels and `/app/src` are bytecode-compiled (`--compile-bytecode` + `compileall`) and `runner.py` defers `plotly`/`scipy.stats` imports unless referenced, cutting container execution time from `>30s` cold timeouts to `~7.7s` under `--cpus=1 --read-only`.
+  - `disabled` (`DisabledSandbox`): Explicitly disables agent-generated `python_repl` (`SandboxUnavailableError`) in multi-tenant / serverless public deployments (`deploy/hf-spaces`, `deploy/gcp`) while keeping deterministic EDA, ML Lab, and deterministic copilot tools available.
+  - `strict_subprocess`: Explicitly restricted to trusted local development (`APP_ENV=development` only); provides **application-level process defense-in-depth** (*not* OS container isolation). Any non-development environment attempting `strict_subprocess` fails closed (`SandboxUnavailableError`), and SpectrumBloom never silently downgrades isolation backends.
+  - `nsjail` (`NsjailSandbox` + `sandbox/nsjail.cfg`): Optional Linux namespace/rlimit confinement where installed (implemented fail-closed; untested without a native Linux `nsjail` binary).
+- **Static AST Gate & Runner Hardening:**
+  - Rejects disallowed imports, dunder attributes, reflection builtins (`getattr`, `eval`, `exec`, `open`), file I/O (`read_*`, `to_csv`, `to_pickle`), and pandas expression evaluation (`df.eval`, `df.query`).
+  - DataFrames cross via PyArrow Parquet (with safe typed JSON fallback), never `pickle`.
+  - Runs under `python -I` isolated mode with socket/DNS kill-switches, prefix-locked read-only `open()`, figure collection across `plotly_figures`, `_sb_last_expr`, and top-level figure bindings (`fig`), plus OS Kernel Job Objects (Windows) or POSIX `rlimit` + RSS watchdog (`strict_subprocess`).

@@ -47,5 +47,9 @@ class LLMInvocationError(SpectrumBloomError):
     """Raised when calling the configured LLM backend fails."""
 
 
+class LLMTimeoutError(LLMInvocationError):
+    """Raised when LLM inference exceeds the configured request timeout."""
+
+
 class MLExperimentError(SpectrumBloomError):
     """Raised when an ML experiment request cannot be executed on the dataset."""

@@ -29,6 +29,12 @@ class ChatMessageRecord(BaseModel):
     content: str
     timestamp: str = Field(default_factory=utc_now_iso)
     figures: list[dict[str, Any]] = Field(default_factory=list)
+    tool_traces: list[ToolTraceItem] = Field(default_factory=list)
+    evaluation: dict[str, Any] | None = None
+    status: Literal["success", "failed"] = "success"
+    error: str | None = None
+    latency_ms: float | None = None
+    retries_used: int = 0
 
 
 class ToolTraceItem(BaseModel):
@@ -209,6 +215,9 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     session_id: str
     answer: str
+    status: Literal["success", "failed"] = "success"
+    error: str | None = None
+    timed_out: bool = False
     figures: list[dict[str, Any]] = Field(default_factory=list)
     tool_traces: list[ToolTraceItem] = Field(default_factory=list)
     retries_used: int = 0

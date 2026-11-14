@@ -1,0 +1,35 @@
+FROM docker:27-cli AS docker-cli
+
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+COPY --from=ghcr.io/astral-sh/uv:0.6.10 /uv /bin/
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+
+WORKDIR /app
+
+RUN uv pip install --system --no-cache --compile-bytecode \
+      "fastapi>=0.115.0,<1.0" \
+      "uvicorn[standard]>=0.32.0,<1.0" \
+      "pydantic>=2.9.0,<3.0" \
+      "pydantic-settings>=2.6.0,<3.0" \
+      "httpx>=0.27.0,<1.0" \
+      "pandas>=2.2.0,<3.0"
+
+COPY src/spectrumbloom/__init__.py ./src/spectrumbloom/__init__.py
+COPY src/spectrumbloom/domain ./src/spectrumbloom/domain
+COPY src/spectrumbloom/core/config.py src/spectrumbloom/core/__init__.py ./src/spectrumbloom/core/
+COPY src/spectrumbloom/sandbox ./src/spectrumbloom/sandbox
+
+RUN python -m compileall -q /app/src
+
+ENV PYTHONPATH=/app/src
+
+EXPOSE 9100
+
+HEALTHCHECK --interval=20s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/health')" || exit 1
+
+CMD ["uvicorn", "spectrumbloom.sandbox.executor_app:app", "--host", "0.0.0.0", "--port", "9100"]

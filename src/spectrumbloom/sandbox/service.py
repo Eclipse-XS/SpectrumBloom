@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+import base64
 import ctypes
 import ctypes.wintypes as wt
 import json
+import logging
 import os
+import re
+import secrets
 import shutil
 import signal
 import subprocess
 import sys
 import time
 import uuid
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
+import httpx
 import pandas as pd
 
 from spectrumbloom.core.config import Settings
@@ -26,6 +33,7 @@ from spectrumbloom.domain.exceptions import (
 from spectrumbloom.domain.schemas import SandboxExecutionResult
 from spectrumbloom.sandbox.ast_guard import validate_code_safety
 
+_logger = logging.getLogger(__name__)
 RUNNER_PATH = Path(__file__).with_name("runner.py")
 NSJAIL_CFG_PATH = Path(__file__).with_name("nsjail.cfg")
 
@@ -201,14 +209,13 @@ def _get_posix_rss_mb(pid: int) -> float | None:
     return total_rss
 
 
-def _serialize_df_for_sandbox(df: pd.DataFrame, sandbox_dir: Path) -> tuple[Path, str]:
-    """Serialize DataFrame without pickle (Parquet first, safe JSON fallback)."""
-    parquet_path = sandbox_dir / "dataset.parquet"
+def _serialize_df_bytes_for_sandbox(df: pd.DataFrame) -> tuple[bytes, str]:
+    """Serialize DataFrame to in-memory Parquet (or typed JSON fallback) without pickle."""
+    buf = BytesIO()
     try:
-        df.to_parquet(parquet_path, index=False)
-        return parquet_path, "parquet"
+        df.to_parquet(buf, index=False)
+        return buf.getvalue(), "parquet"
     except Exception:
-        json_path = sandbox_dir / "dataset.json"
         safe_df = df.copy()
         for col in safe_df.columns:
             if pd.api.types.is_datetime64_any_dtype(safe_df[col]):
@@ -218,8 +225,15 @@ def _serialize_df_for_sandbox(df: pd.DataFrame, sandbox_dir: Path) -> tuple[Path
             "dtypes": {str(c): str(dt) for c, dt in df.dtypes.items()},
             "data": safe_df.where(pd.notna(safe_df), None).values.tolist(),
         }
-        json_path.write_text(json.dumps(payload), encoding="utf-8")
-        return json_path, "json"
+        return json.dumps(payload).encode("utf-8"), "json"
+
+
+def _serialize_df_for_sandbox(df: pd.DataFrame, sandbox_dir: Path) -> tuple[Path, str]:
+    """Write DataFrame without pickle (Parquet first, safe JSON fallback)."""
+    raw_bytes, fmt = _serialize_df_bytes_for_sandbox(df)
+    target = sandbox_dir / f"dataset.{fmt}"
+    target.write_bytes(raw_bytes)
+    return target, fmt
 
 
 def _minimal_sandbox_env(work_dir: Path) -> dict[str, str]:
@@ -491,16 +505,32 @@ class SubprocessSandbox:
             )
 
 
+def _extract_framed_json(stdout_text: str, frame_token: str) -> dict[str, Any] | None:
+    pattern = re.compile(
+        rf"__SB_FRAME_{re.escape(frame_token)}_START__\s*(\{{[\s\S]*?\}})\s*__SB_FRAME_{re.escape(frame_token)}_END__"
+    )
+    match = pattern.search(stdout_text)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(1))
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
 class DockerSandbox:
     """Hardened non-privileged container-per-execution sandbox (fail-closed)."""
 
     backend_name = "docker"
+    SANDBOX_UID = 10001
+    SANDBOX_GID = 10001
 
     def __init__(
         self,
         *,
         image: str = "spectrumbloom-sandbox:latest",
-        timeout_seconds: int = 15,
+        timeout_seconds: int = 25,
         memory_limit_mb: int = 512,
         max_output_chars: int = 20000,
     ) -> None:
@@ -508,6 +538,188 @@ class DockerSandbox:
         if not self.docker_bin:
             raise SandboxUnavailableError("Docker CLI not found for docker sandbox backend.")
         self.image = image
+        self.timeout_seconds = timeout_seconds
+        self.memory_limit_mb = memory_limit_mb
+        self.max_output_chars = max_output_chars
+
+    def _inspect_oom_killed(self, container_name: str) -> bool:
+        try:
+            insp = subprocess.run(
+                [self.docker_bin, "inspect", "-f", "{{.State.OOMKilled}}", container_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                stdin=subprocess.DEVNULL,
+            )
+            return insp.returncode == 0 and insp.stdout.strip().lower() == "true"
+        except Exception:
+            return False
+
+    def _cleanup_container(self, container_name: str) -> None:
+        try:
+            subprocess.run(
+                [self.docker_bin, "rm", "-f", container_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                stdin=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            _logger.debug("Ignoring container cleanup error for %s: %s", container_name, exc)
+
+    def execute(self, code: str, df: pd.DataFrame) -> SandboxExecutionResult:
+        started = time.perf_counter()
+        try:
+            clean_code, _ = validate_code_safety(code)
+        except SandboxSecurityError as exc:
+            return SandboxExecutionResult(
+                error=f"Security check rejected code: {exc}",
+                backend=self.backend_name,
+                duration_ms=round((time.perf_counter() - started) * 1000.0, 2),
+            )
+
+        data_bytes, data_format = _serialize_df_bytes_for_sandbox(df)
+        return self.execute_serialized(
+            clean_code=clean_code,
+            data_bytes=data_bytes,
+            data_format=data_format,
+            started=started,
+        )
+
+    def execute_serialized(
+        self,
+        *,
+        clean_code: str,
+        data_bytes: bytes,
+        data_format: str,
+        started: float | None = None,
+    ) -> SandboxExecutionResult:
+        """Run pre-validated code inside an ephemeral mountless Docker container via stdio-json."""
+        t0 = started if started is not None else time.perf_counter()
+        clean_code, _ = validate_code_safety(clean_code)
+        frame_token = secrets.token_hex(16)
+        container_name = f"sb_{uuid.uuid4().hex[:12]}"
+        envelope = json.dumps(
+            {
+                "code": clean_code,
+                "data_format": data_format,
+                "data_b64": base64.b64encode(data_bytes).decode("ascii"),
+            }
+        )
+
+        command = [
+            self.docker_bin,
+            "run",
+            "-i",
+            "--init",
+            "--name",
+            container_name,
+            "--network=none",
+            "--read-only",
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges:true",
+            f"--user={self.SANDBOX_UID}:{self.SANDBOX_GID}",
+            "--pids-limit=64",
+            "--cpus=1",
+            f"--memory={self.memory_limit_mb}m",
+            f"--memory-swap={self.memory_limit_mb}m",
+            "--tmpfs=/tmp:rw,noexec,nosuid,size=16m",
+            "-e",
+            "HOME=/tmp",
+            self.image,
+            "python",
+            "-I",
+            "/app/src/spectrumbloom/sandbox/runner.py",
+            "--stdio-json",
+            "--frame-token",
+            frame_token,
+            "--timeout-seconds",
+            str(self.timeout_seconds),
+            "--memory-limit-mb",
+            str(self.memory_limit_mb),
+            "--max-output-chars",
+            str(self.max_output_chars),
+        ]
+
+        try:
+            try:
+                completed = subprocess.run(
+                    command,
+                    input=envelope,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout_seconds + 8,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise SandboxTimeoutError(
+                    f"Docker sandbox timed out after {self.timeout_seconds}s."
+                ) from exc
+
+            duration_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+            payload = _extract_framed_json(completed.stdout or "", frame_token)
+            if payload is not None:
+                return SandboxExecutionResult(
+                    stdout=payload.get("stdout", "") or "",
+                    result=payload.get("result"),
+                    figures=payload.get("figures", []) or [],
+                    error=payload.get("error"),
+                    backend=self.backend_name,
+                    duration_ms=duration_ms,
+                )
+
+            if completed.returncode in (124, 152):
+                raise SandboxTimeoutError(
+                    f"Docker sandbox exceeded CPU/time limit of {self.timeout_seconds}s."
+                )
+            if completed.returncode == 137:
+                if self._inspect_oom_killed(container_name):
+                    return SandboxExecutionResult(
+                        error=(
+                            f"Execution terminated: container memory exceeded "
+                            f"{self.memory_limit_mb} MB limit "
+                            "(cgroup OOMKilled / exit 137)."
+                        ),
+                        backend=self.backend_name,
+                        duration_ms=duration_ms,
+                    )
+                if duration_ms >= self.timeout_seconds * 1000.0:
+                    raise SandboxTimeoutError(
+                        f"Docker sandbox exceeded CPU/time limit of {self.timeout_seconds}s "
+                        "(SIGKILL)."
+                    )
+                raise SandboxUnavailableError(
+                    "Docker sandbox container was killed unexpectedly (exit 137)."
+                )
+            if completed.returncode != 0:
+                raise SandboxUnavailableError(
+                    "Docker sandbox backend failed to run (fail-closed; no fallback): "
+                    + ((completed.stderr or "").strip() or f"exit={completed.returncode}")
+                )
+            raise SandboxUnavailableError("Docker sandbox returned no output payload.")
+        finally:
+            self._cleanup_container(container_name)
+
+
+class RemoteDockerSandbox:
+    """Client delegating untrusted Python execution to an isolated sandbox-executor boundary."""
+
+    backend_name = "remote"
+
+    def __init__(
+        self,
+        *,
+        executor_url: str,
+        executor_token: str,
+        timeout_seconds: int = 25,
+        memory_limit_mb: int = 512,
+        max_output_chars: int = 20000,
+    ) -> None:
+        self.executor_url = executor_url.rstrip("/")
+        self.executor_token = executor_token.strip()
+        if not self.executor_url.startswith(("http://", "https://")) or not self.executor_token:
+            raise SandboxUnavailableError(
+                "Remote sandbox backend requires SANDBOX_EXECUTOR_URL and SANDBOX_EXECUTOR_TOKEN."
+            )
         self.timeout_seconds = timeout_seconds
         self.memory_limit_mb = memory_limit_mb
         self.max_output_chars = max_output_chars
@@ -523,141 +735,57 @@ class DockerSandbox:
                 duration_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
 
-        with TemporaryDirectory(prefix="sb_docker_") as tmp_dir:
-            sandbox_path = Path(tmp_dir)
-            code_file = sandbox_path / "code.py"
-            output_file = sandbox_path / "output.json"
-            data_file, data_format = _serialize_df_for_sandbox(df, sandbox_path)
-            code_file.write_text(clean_code, encoding="utf-8")
+        data_bytes, data_format = _serialize_df_bytes_for_sandbox(df)
+        try:
+            resp = httpx.post(
+                f"{self.executor_url}/execute",
+                json={
+                    "code": clean_code,
+                    "data_format": data_format,
+                    "data_b64": base64.b64encode(data_bytes).decode("ascii"),
+                    "timeout_seconds": self.timeout_seconds,
+                    "memory_limit_mb": self.memory_limit_mb,
+                    "max_output_chars": self.max_output_chars,
+                },
+                headers={"Authorization": f"Bearer {self.executor_token}"},
+                timeout=float(self.timeout_seconds + 15),
+            )
+        except httpx.TimeoutException as exc:
+            raise SandboxTimeoutError(
+                f"Remote Docker sandbox exceeded timeout of {self.timeout_seconds}s."
+            ) from exc
+        except Exception as exc:
+            raise SandboxUnavailableError(
+                f"Remote sandbox executor unavailable (fail-closed; no fallback): {exc}"
+            ) from exc
 
-            user_args: list[str] = []
-            if os.name != "nt" and hasattr(os, "getuid"):
-                uid = os.getuid()
-                if uid == 0:
-                    for p in (sandbox_path, code_file, data_file):
-                        shutil.chown(p, user=10001, group=10001)
-                else:
-                    user_args = ["--user", f"{uid}:{os.getgid()}"]
+        if resp.status_code == 408:
+            default_msg = f"Remote sandbox timed out after {self.timeout_seconds}s."
+            raise SandboxTimeoutError(resp.json().get("detail", default_msg))
+        if resp.status_code >= 500:
+            raise SandboxUnavailableError(
+                f"Remote sandbox executor error ({resp.status_code}): {resp.text}"
+            )
+        if resp.status_code >= 400:
+            detail = resp.json().get("detail", resp.text) if resp.text else str(resp.status_code)
+            raise SandboxUnavailableError(f"Remote sandbox rejected request: {detail}")
 
-            container_name = f"sb_{uuid.uuid4().hex[:12]}"
-            command = [
-                self.docker_bin,
-                "run",
-                "--init",
-                "--name",
-                container_name,
-                "--network=none",
-                "--read-only",
-                "--cap-drop=ALL",
-                "--security-opt=no-new-privileges:true",
-                "--pids-limit=64",
-                "--cpus=1",
-                f"--memory={self.memory_limit_mb}m",
-                f"--memory-swap={self.memory_limit_mb}m",
-                "--tmpfs=/tmp:rw,noexec,nosuid,size=16m",
-                "-e",
-                "HOME=/tmp",
-                *user_args,
-                "-v",
-                f"{sandbox_path}:/sandbox:rw",
-                self.image,
-                "python",
-                "-I",
-                "/app/src/spectrumbloom/sandbox/runner.py",
-                "--code-file",
-                "/sandbox/code.py",
-                "--data-file",
-                f"/sandbox/{data_file.name}",
-                "--data-format",
-                data_format,
-                "--output-file",
-                "/sandbox/output.json",
-                "--timeout-seconds",
-                str(self.timeout_seconds),
-                "--memory-limit-mb",
-                str(self.memory_limit_mb),
-                "--max-output-chars",
-                str(self.max_output_chars),
-            ]
-            try:
-                try:
-                    completed = subprocess.run(
-                        command,
-                        capture_output=True,
-                        text=True,
-                        timeout=self.timeout_seconds + 8,
-                        stdin=subprocess.DEVNULL,
-                    )
-                except subprocess.TimeoutExpired as exc:
-                    raise SandboxTimeoutError(
-                        f"Docker sandbox timed out after {self.timeout_seconds}s."
-                    ) from exc
+        body = resp.json()
+        body["backend"] = self.backend_name
+        return SandboxExecutionResult.model_validate(body)
 
-                duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
-                if not output_file.exists():
-                    if completed.returncode in (124, 152):
-                        raise SandboxTimeoutError(
-                            f"Docker sandbox exceeded CPU/time limit of {self.timeout_seconds}s."
-                        )
-                    if completed.returncode == 137:
-                        insp = subprocess.run(
-                            [
-                                self.docker_bin,
-                                "inspect",
-                                "-f",
-                                "{{.State.OOMKilled}}",
-                                container_name,
-                            ],
-                            capture_output=True,
-                            text=True,
-                            timeout=5,
-                            stdin=subprocess.DEVNULL,
-                        )
-                        is_oom = insp.returncode == 0 and insp.stdout.strip().lower() == "true"
-                        if is_oom:
-                            return SandboxExecutionResult(
-                                error=(
-                                    f"Execution terminated: container memory exceeded "
-                                    f"{self.memory_limit_mb} MB limit "
-                                    "(cgroup OOMKilled / exit 137)."
-                                ),
-                                backend=self.backend_name,
-                                duration_ms=duration_ms,
-                            )
-                        if duration_ms >= self.timeout_seconds * 1000.0:
-                            raise SandboxTimeoutError(
-                                f"Docker sandbox exceeded CPU/time limit of "
-                                f"{self.timeout_seconds}s (SIGKILL)."
-                            )
-                        raise SandboxUnavailableError(
-                            "Docker sandbox container was killed unexpectedly (exit 137)."
-                        )
-                    if completed.returncode != 0:
-                        raise SandboxUnavailableError(
-                            "Docker sandbox backend failed to run (fail-closed; no fallback): "
-                            + (completed.stderr.strip() or f"exit={completed.returncode}")
-                        )
-            finally:
-                subprocess.run(
-                    [self.docker_bin, "rm", "-f", container_name],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    stdin=subprocess.DEVNULL,
-                )
 
-            if output_file.exists():
-                payload = json.loads(output_file.read_text(encoding="utf-8"))
-                return SandboxExecutionResult(
-                    stdout=payload.get("stdout", "") or "",
-                    result=payload.get("result"),
-                    figures=payload.get("figures", []) or [],
-                    error=payload.get("error"),
-                    backend=self.backend_name,
-                    duration_ms=duration_ms,
-                )
+class DisabledSandbox:
+    """Fail-closed placeholder when dynamic Python execution is intentionally disabled."""
 
-            raise SandboxUnavailableError("Docker sandbox returned no output payload.")
+    backend_name = "disabled"
+
+    def execute(self, code: str, df: pd.DataFrame) -> SandboxExecutionResult:
+        raise SandboxUnavailableError(
+            "Dynamic agent-generated Python execution is disabled in this deployment "
+            "(SANDBOX_BACKEND=disabled). Deterministic EDA, statistical diagnostics, and ML "
+            "baselines remain available."
+        )
 
 
 class NsjailSandbox:
@@ -757,17 +885,34 @@ class NsjailSandbox:
             )
 
 
-def create_sandbox(settings: Settings) -> SubprocessSandbox | DockerSandbox | NsjailSandbox:
+def create_sandbox(
+    settings: Settings,
+) -> SubprocessSandbox | DockerSandbox | RemoteDockerSandbox | NsjailSandbox | DisabledSandbox:
     """Instantiate the configured sandbox backend (fail-closed, zero silent fallback)."""
     common = {
         "timeout_seconds": settings.sandbox_timeout_seconds,
         "memory_limit_mb": settings.sandbox_memory_limit_mb,
         "max_output_chars": settings.sandbox_max_output_chars,
     }
-    if settings.sandbox_backend == "strict_subprocess":
-        return SubprocessSandbox(**common)
     if settings.sandbox_backend == "docker":
         return DockerSandbox(image=settings.sandbox_docker_image, **common)
+    if settings.sandbox_backend == "remote":
+        return RemoteDockerSandbox(
+            executor_url=settings.sandbox_executor_url,
+            executor_token=settings.sandbox_executor_token,
+            **common,
+        )
     if settings.sandbox_backend == "nsjail":
         return NsjailSandbox(**common)
+    if settings.sandbox_backend == "strict_subprocess":
+        if settings.app_env not in {"development", "test"} or not (
+            settings.allow_trusted_local_subprocess
+        ):
+            raise SandboxUnavailableError(
+                "strict_subprocess sandbox is restricted to trusted local development and "
+                "requires APP_ENV=development|test and ALLOW_TRUSTED_LOCAL_SUBPROCESS=true."
+            )
+        return SubprocessSandbox(**common)
+    if settings.sandbox_backend == "disabled":
+        return DisabledSandbox()
     raise SandboxUnavailableError(f"Unsupported sandbox backend: {settings.sandbox_backend}")

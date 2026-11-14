@@ -3,7 +3,8 @@ FROM python:3.12-slim-bookworm
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     SPECTRUMBLOOM_API_URL=http://127.0.0.1:8000 \
-    LOCAL_DATASET_DIR=/tmp/spectrumbloom/datasets
+    LOCAL_DATASET_DIR=/tmp/spectrumbloom/datasets \
+    SANDBOX_BACKEND=disabled
 
 COPY --from=ghcr.io/astral-sh/uv:0.6.10 /uv /bin/
 

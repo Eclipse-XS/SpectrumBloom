@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import builtins
 import datetime as dt
 import io
@@ -20,7 +21,7 @@ import sys
 import time
 import traceback
 from contextlib import redirect_stdout
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,22 @@ def _json_safe(obj: Any) -> Any:
     return obj
 
 
+def _has_non_empty_trace_data(fig_dict: dict[str, Any]) -> bool:
+    traces = fig_dict.get("data")
+    if not isinstance(traces, list) or not traces:
+        return False
+    for trace in traces:
+        if not isinstance(trace, dict):
+            continue
+        for key in ("x", "y", "z", "values", "lat", "lon", "r", "theta", "cells", "dimensions"):
+            val = trace.get(key)
+            if isinstance(val, list) and any(item is not None for item in val):
+                return True
+            if isinstance(val, dict) and val.get("bdata") and val.get("dtype"):
+                return True
+    return False
+
+
 def _serialize_figure(fig: Any, index: int) -> dict[str, Any]:
     title: str | None = None
     try:
@@ -85,9 +102,19 @@ def _serialize_figure(fig: Any, index: int) -> dict[str, Any]:
 
     try:
         fig_dict = _json_safe(fig.to_dict())
+        if not _has_non_empty_trace_data(fig_dict):
+            raise ValueError(
+                "Plotly figure contains no non-empty data traces. "
+                "Verify column names, filters, and non-null values before plotting."
+            )
+        layout = fig_dict.setdefault("layout", {})
+        if isinstance(layout, dict):
+            title_obj = layout.get("title")
+            if not isinstance(title_obj, dict) or not title_obj.get("text"):
+                layout["title"] = {"text": title or f"Figure {index}"}
         fig_json = json.dumps(fig_dict)
-    except Exception:
-        fig_json = json.dumps({"error": "Failed to serialize Plotly figure"})
+    except Exception as exc:
+        raise ValueError(f"Invalid Plotly figure #{index}: {exc}") from exc
 
     return {
         "id": f"fig_{index}",
@@ -112,13 +139,13 @@ def _normalize_result(value: Any) -> Any:
     }
 
 
-def _load_dataframe(data_file: Path, data_format: str):
+def _load_dataframe_bytes(data_bytes: bytes, data_format: str):
     import pandas as pd
 
     if data_format == "parquet":
-        return pd.read_parquet(data_file)
+        return pd.read_parquet(BytesIO(data_bytes))
     if data_format == "json":
-        payload = json.loads(data_file.read_text(encoding="utf-8"))
+        payload = json.loads(data_bytes.decode("utf-8"))
         df = pd.DataFrame(
             data=payload["data"],
             columns=payload["columns"],
@@ -128,6 +155,10 @@ def _load_dataframe(data_file: Path, data_format: str):
                 df[col] = pd.to_datetime(df[col], errors="coerce")
         return df
     raise ValueError(f"Unsupported sandbox dataset format: {data_format}")
+
+
+def _load_dataframe(data_file: Path, data_format: str):
+    return _load_dataframe_bytes(data_file.read_bytes(), data_format)
 
 
 def _disable_network() -> None:
@@ -308,10 +339,20 @@ def _run(
 ) -> dict[str, Any]:
     import numpy as np
     import pandas as pd
-    import plotly.express as px
-    import plotly.graph_objects as go
-    import plotly.io as pio
-    import scipy.stats as stats
+
+    needs_plotly = any(tok in code for tok in ("px", "go", "pio", "plotly", "plot"))
+    needs_stats = any(tok in code for tok in ("stats", "scipy"))
+
+    px: Any = None
+    go: Any = None
+    pio: Any = None
+    stats: Any = None
+    if needs_plotly:
+        import plotly.express as px  # type: ignore[no-redef]
+        import plotly.graph_objects as go  # type: ignore[no-redef]
+        import plotly.io as pio  # type: ignore[no-redef]
+    if needs_stats:
+        import scipy.stats as stats  # type: ignore[no-redef]
 
     tree = ast.parse(code, mode="exec")
     SandboxASTValidator().visit(tree)
@@ -326,6 +367,7 @@ def _run(
     _apply_posix_limits(timeout_seconds, memory_limit_mb)
     _disable_network()
     _lock_filesystem()
+    sys.stdin = StringIO("")
 
     stdout_buf = StringIO()
     env_vars: dict[str, Any] = {
@@ -334,14 +376,16 @@ def _run(
         "df": df,
         "np": np,
         "pd": pd,
-        "px": px,
-        "go": go,
-        "pio": pio,
-        "stats": stats,
         "plotly_figures": [],
         "result": None,
         "_sb_last_expr": None,
     }
+    if needs_plotly:
+        env_vars["px"] = px
+        env_vars["go"] = go
+        env_vars["pio"] = pio
+    if needs_stats:
+        env_vars["stats"] = stats
 
     with redirect_stdout(stdout_buf):
         try:
@@ -350,18 +394,31 @@ def _run(
             if hasattr(signal, "alarm"):
                 signal.alarm(0)
 
+    collected_figures = list(env_vars.get("plotly_figures") or [])
+    seen_figure_ids = {id(fig) for fig in collected_figures}
+
     last_val = env_vars.get("_sb_last_expr")
     if last_val is not None:
-        if hasattr(last_val, "to_plotly_json"):
-            if not env_vars.get("plotly_figures"):
-                env_vars["plotly_figures"].append(last_val)
+        if hasattr(last_val, "to_plotly_json") and callable(last_val.to_plotly_json):
+            if id(last_val) not in seen_figure_ids:
+                collected_figures.append(last_val)
+                seen_figure_ids.add(id(last_val))
         elif env_vars.get("result") is None:
             env_vars["result"] = last_val
 
-    figures = [
-        _serialize_figure(fig, idx)
-        for idx, fig in enumerate(env_vars.get("plotly_figures", []), start=1)
-    ]
+    for var_name, val in env_vars.items():
+        if var_name.startswith("_") or var_name == "plotly_figures" or val is None:
+            continue
+        if (
+            not isinstance(val, type)
+            and hasattr(val, "to_plotly_json")
+            and callable(val.to_plotly_json)
+            and id(val) not in seen_figure_ids
+        ):
+            collected_figures.append(val)
+            seen_figure_ids.add(id(val))
+
+    figures = [_serialize_figure(fig, idx) for idx, fig in enumerate(collected_figures, start=1)]
     return {
         "stdout": _truncate(stdout_buf.getvalue(), max_output_chars),
         "result": _normalize_result(env_vars.get("result")),
@@ -370,21 +427,60 @@ def _run(
     }
 
 
+# Preserve original file/stdout handles strictly for the runner's own final JSON output
+_REAL_OPEN = builtins.open
+_REAL_STDOUT = sys.stdout
+
+
+def _safe_write_output(
+    output_file: Path | None,
+    payload: dict[str, Any],
+    *,
+    frame_token: str | None = None,
+) -> int:
+    encoded = json.dumps(payload)
+    if frame_token:
+        _REAL_STDOUT.write(
+            f"\n__SB_FRAME_{frame_token}_START__\n{encoded}\n__SB_FRAME_{frame_token}_END__\n"
+        )
+        _REAL_STDOUT.flush()
+        return 0
+    if output_file is None:
+        raise ValueError("Either --output-file or --stdio-json must be provided.")
+    with _REAL_OPEN(output_file, "w", encoding="utf-8") as handle:
+        handle.write(encoded)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="SpectrumBloom isolated sandbox runner")
-    parser.add_argument("--code-file", required=True)
-    parser.add_argument("--data-file", required=True)
-    parser.add_argument("--data-format", choices=("parquet", "json"), required=True)
-    parser.add_argument("--output-file", required=True)
+    parser.add_argument("--stdio-json", action="store_true")
+    parser.add_argument("--frame-token", default="")
+    parser.add_argument("--code-file")
+    parser.add_argument("--data-file")
+    parser.add_argument("--data-format", choices=("parquet", "json"))
+    parser.add_argument("--output-file")
     parser.add_argument("--timeout-seconds", type=int, required=True)
     parser.add_argument("--memory-limit-mb", type=int, required=True)
     parser.add_argument("--max-output-chars", type=int, default=20000)
     args = parser.parse_args()
 
-    output_file = Path(args.output_file)
+    output_file = Path(args.output_file) if args.output_file else None
+    frame_token = args.frame_token if args.stdio_json else None
     try:
-        code = Path(args.code_file).read_text(encoding="utf-8")
-        df = _load_dataframe(Path(args.data_file), args.data_format)
+        if args.stdio_json:
+            raw_envelope = json.loads(sys.stdin.read())
+            code = str(raw_envelope["code"])
+            data_format = str(raw_envelope["data_format"])
+            data_bytes = base64.b64decode(str(raw_envelope["data_b64"]))
+            df = _load_dataframe_bytes(data_bytes, data_format)
+        else:
+            if not args.code_file or not args.data_file or not args.data_format or not output_file:
+                raise ValueError(
+                    "--code-file, --data-file, --data-format, and --output-file are required."
+                )
+            code = Path(args.code_file).read_text(encoding="utf-8")
+            df = _load_dataframe(Path(args.data_file), args.data_format)
         payload = _run(
             code=code,
             df=df,
@@ -407,21 +503,7 @@ def main() -> int:
             "error": _truncate(traceback.format_exc(), MAX_ERROR_CHARS),
         }
 
-    # Note: we intentionally keep a handle via Path.write_text? Wait: _lock_filesystem()
-    # replaced builtins.open/io.open AFTER _run returns only inside _run, and Path.write_text
-    # calls io.open! So restore open? Wait: _lock_filesystem mutated builtins.open globally!
-    # Therefore we write output using low-level os or BEFORE/WITHOUT breaking output writing.
-    return _safe_write_output(output_file, payload)
-
-
-# Preserve original file write capability strictly for the runner's own final JSON output
-_REAL_OPEN = builtins.open
-
-
-def _safe_write_output(output_file: Path, payload: dict[str, Any]) -> int:
-    with _REAL_OPEN(output_file, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle)
-    return 0
+    return _safe_write_output(output_file, payload, frame_token=frame_token)
 
 
 if __name__ == "__main__":

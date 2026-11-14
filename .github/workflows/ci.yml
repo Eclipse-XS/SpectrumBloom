@@ -59,6 +59,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build SpectrumBloom Sandbox Executor image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.executor
+          push: false
+          tags: spectrumbloom-executor:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Build SpectrumBloom Sandbox image (load locally for E2E test)
         uses: docker/build-push-action@v6
         with:
@@ -77,5 +87,5 @@ jobs:
         run: |
           uv python install 3.12
           uv venv --python 3.12
-          uv pip install pytest pandas pyarrow pydantic pydantic-settings
+          uv pip install pytest pandas pyarrow pydantic pydantic-settings httpx
           uv run pytest -v --tb=short -m docker_sandbox tests/integration/test_docker_sandbox.py

@@ -8,6 +8,7 @@ import time
 import uuid
 from typing import Any
 
+import httpx
 import pandas as pd
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -18,6 +19,7 @@ from spectrumbloom.core.telemetry import TelemetryRuntime
 from spectrumbloom.domain.exceptions import (
     DatasetNotFoundError,
     LLMInvocationError,
+    LLMTimeoutError,
     SessionNotFoundError,
 )
 from spectrumbloom.domain.interfaces import CodeSandbox, DatasetStore, SessionRepository
@@ -138,6 +140,7 @@ class SpectrumBloomService:
             provider=record.provider,
             model=record.model,
             api_key=cache.api_key,
+            request_timeout_seconds=self.settings.llm_request_timeout_seconds,
         )
 
         def df_provider() -> pd.DataFrame:
@@ -154,12 +157,18 @@ class SpectrumBloomService:
             _, _, stats_rep, _ = self._ensure_eda(latest, cache)
             return stats_rep
 
+        def profile_provider() -> DatasetProfile:
+            latest = self._require_session(record.session_id)
+            _, prof, _, _ = self._ensure_eda(latest, cache)
+            return prof
+
         cache.graph = EDAAgentGraph(
             chat_model=chat_model,
             sandbox=self.sandbox,
             df_provider=df_provider,
             dataset_context_provider=context_provider,
             stats_provider=stats_provider,
+            profile_provider=profile_provider,
             checkpointer=cache.checkpointer,
         )
         return cache.graph
@@ -388,7 +397,8 @@ class SpectrumBloomService:
             },
         ) as span:
             with cache.lock:
-                self._ensure_eda(record, cache)
+                df, prof, _, _ = self._ensure_eda(record, cache)
+                profile_context = format_profile_for_prompt(prof, df)
                 graph = self._ensure_graph(record, cache)
                 lf_cb = self.telemetry.create_langfuse_callback()
                 callbacks = [lf_cb] if lf_cb is not None else None
@@ -399,7 +409,20 @@ class SpectrumBloomService:
                         thread_id=record.thread_id,
                         callbacks=callbacks,
                     )
+                except LLMTimeoutError:
+                    raise
+                except (httpx.TimeoutException, TimeoutError) as exc:
+                    raise LLMTimeoutError(
+                        f"LLM inference timed out after "
+                        f"{self.settings.llm_request_timeout_seconds}s: {exc}"
+                    ) from exc
                 except Exception as exc:
+                    msg = str(exc)
+                    if "timed out" in msg.lower() or "timeout" in msg.lower():
+                        raise LLMTimeoutError(
+                            f"LLM inference timed out after "
+                            f"{self.settings.llm_request_timeout_seconds}s: {exc}"
+                        ) from exc
                     raise LLMInvocationError(f"Agent query failed: {exc}") from exc
                 finally:
                     self.telemetry.flush()
@@ -410,6 +433,9 @@ class SpectrumBloomService:
                 ]
                 figures = list(raw_result.get("turn_figures") or [])
                 answer = normalize_text(raw_result.get("final_answer", ""))
+                status = "failed" if raw_result.get("status") == "failed" else "success"
+                terminal_error = raw_result.get("terminal_error")
+                timed_out = bool(raw_result.get("timed_out", False))
                 retries_used = int(raw_result.get("retries", 0))
                 latency_ms = round((time.perf_counter() - started) * 1000.0, 2)
 
@@ -418,6 +444,8 @@ class SpectrumBloomService:
                     answer=answer,
                     tool_traces=traces,
                     figures=figures,
+                    profile_context=profile_context,
+                    status=status,
                 )
 
                 for trace_item in traces:
@@ -432,16 +460,27 @@ class SpectrumBloomService:
 
                 self.telemetry.query_counter.add(
                     1,
-                    {"provider": record.provider, "model": record.model},
+                    {"provider": record.provider, "model": record.model, "status": status},
                 )
                 self.telemetry.query_latency_ms.record(latency_ms)
                 span.set_attribute("agent.retries", retries_used)
                 span.set_attribute("agent.figure_count", len(figures))
+                span.set_attribute("agent.status", status)
                 span.set_attribute("eval.passed", bool(eval_summary["passed"]))
 
                 record.messages.append(ChatMessageRecord(role="user", content=query))
                 record.messages.append(
-                    ChatMessageRecord(role="assistant", content=answer, figures=figures)
+                    ChatMessageRecord(
+                        role="assistant",
+                        content=answer,
+                        figures=figures,
+                        tool_traces=traces,
+                        evaluation=eval_summary,
+                        status=status,
+                        error=terminal_error,
+                        latency_ms=latency_ms,
+                        retries_used=retries_used,
+                    )
                 )
                 record.figures.extend(figures)
                 record.last_tool_traces = traces
@@ -451,6 +490,9 @@ class SpectrumBloomService:
                 return QueryResponse(
                     session_id=session_id,
                     answer=answer,
+                    status=status,
+                    error=terminal_error,
+                    timed_out=timed_out,
                     figures=figures,
                     tool_traces=traces,
                     retries_used=retries_used,

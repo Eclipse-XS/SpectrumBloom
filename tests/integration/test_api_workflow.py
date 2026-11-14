@@ -66,6 +66,7 @@ def test_end_to_end_api_lifecycle_and_otel(tmp_path: Path, monkeypatch) -> None:
         local_dataset_dir=tmp_path / "datasets",
         api_auth_token="secret-test-token",
         sandbox_backend="strict_subprocess",
+        allow_trusted_local_subprocess=True,
     )
     app = create_app(settings, in_memory_telemetry=True)
     monkeypatch.setattr(
@@ -79,6 +80,7 @@ def test_end_to_end_api_lifecycle_and_otel(tmp_path: Path, monkeypatch) -> None:
         health = client.get("/health")
         assert health.status_code == 200
         assert health.json()["status"] == "ok"
+        assert health.json()["sandbox_dynamic_python_enabled"] is True
 
         # Protected endpoints reject missing/bad bearer tokens
         assert client.post("/api/v1/sessions", json={}).status_code == 401
@@ -129,6 +131,8 @@ def test_end_to_end_api_lifecycle_and_otel(tmp_path: Path, monkeypatch) -> None:
         )
         assert q_res.status_code == 200
         q_body = q_res.json()
+        assert q_body["status"] == "success"
+        assert q_body["timed_out"] is False
         assert "Electronics" in q_body["answer"]
         assert len(q_body["figures"]) == 1
         assert q_body["evaluation"]["passed"] is True
@@ -144,3 +148,64 @@ def test_end_to_end_api_lifecycle_and_otel(tmp_path: Path, monkeypatch) -> None:
         del_res = client.delete(f"/api/v1/sessions/{sid}", headers=headers)
         assert del_res.status_code == 200
         assert client.get(f"/api/v1/sessions/{sid}", headers=headers).status_code == 404
+
+
+def test_llm_timeout_returns_504_and_recovers_cleanly(tmp_path: Path, monkeypatch) -> None:
+    import httpx
+
+    sample_csv = Path(__file__).resolve().parents[2] / "examples" / "sample_ecommerce.csv"
+    settings = Settings(
+        app_env="test",
+        local_dataset_dir=tmp_path / "datasets",
+        api_auth_token="secret-test-token",
+        sandbox_backend="disabled",
+        llm_request_timeout_seconds=10,
+    )
+    app = create_app(settings, in_memory_telemetry=True)
+
+    class _FlakyTimeoutModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def bind_tools(self, tools: list[Any]) -> _FlakyTimeoutModel:
+            return self
+
+        def invoke(self, messages: list[Any]) -> AIMessage:
+            self.calls += 1
+            if self.calls == 1:
+                raise httpx.ReadTimeout("simulated ollama inference timeout")
+            return AIMessage(content="Recovered response after timeout.")
+
+    monkeypatch.setattr(
+        app.state.service.llm_provider,
+        "build_chat_model",
+        lambda **kwargs: _FlakyTimeoutModel(),
+    )
+
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer secret-test-token"}
+        sid = client.post("/api/v1/sessions", json={}, headers=headers).json()["session_id"]
+        client.post(
+            f"/api/v1/sessions/{sid}/upload",
+            files={"file": ("sample_ecommerce.csv", sample_csv.read_bytes(), "text/csv")},
+            headers=headers,
+        )
+
+        # Timeout yields HTTP 504 without corrupting thread history
+        t_res = client.post(
+            f"/api/v1/sessions/{sid}/query",
+            json={"query": "Slow question"},
+            headers=headers,
+        )
+        assert t_res.status_code == 504
+        assert "timed out" in t_res.json()["detail"].lower()
+
+        # Subsequent query on same session recovers cleanly
+        ok_res = client.post(
+            f"/api/v1/sessions/{sid}/query",
+            json={"query": "Quick retry"},
+            headers=headers,
+        )
+        assert ok_res.status_code == 200
+        assert ok_res.json()["status"] == "success"
+        assert "Recovered response" in ok_res.json()["answer"]

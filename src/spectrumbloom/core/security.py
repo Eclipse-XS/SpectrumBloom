@@ -39,6 +39,11 @@ def sanitize_json_payload(obj: Any) -> Any:
         return {str(k): sanitize_json_payload(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [sanitize_json_payload(v) for v in obj]
+    if hasattr(obj, "tolist") and callable(obj.tolist):
+        try:
+            return sanitize_json_payload(obj.tolist())
+        except Exception:
+            return str(obj)
     if hasattr(obj, "item") and callable(obj.item):
         try:
             return sanitize_json_payload(obj.item())

@@ -187,31 +187,45 @@ def profile_dataframe(df: pd.DataFrame, filename: str = "dataset") -> DatasetPro
     )
 
 
-def format_profile_for_prompt(profile: DatasetProfile, df: pd.DataFrame) -> str:
+def format_profile_for_prompt(
+    profile: DatasetProfile,
+    df: pd.DataFrame,
+    *,
+    max_detailed_cols: int = 16,
+) -> str:
     """Render a compact, token-efficient schema & summary for local 4B LLMs."""
     lines = [
         f"Dataset: {profile.filename} ({profile.rows} rows x {profile.columns} columns)",
         f"Completeness: {profile.completeness_pct}% | Duplicates: {profile.duplicate_rows}",
-        "Columns:",
+        f"Exact column names: {[col.name for col in profile.column_profiles]}",
+        "Column details:",
     ]
-    for col in profile.column_profiles:
+    for col in profile.column_profiles[:max_detailed_cols]:
         if col.numeric_stats:
             ns = col.numeric_stats
             stats_str = (
-                f"mean={ns['mean']:.4g}, std={ns['std']:.4g}, "
-                f"min={ns['min']:.4g}, median={ns['median']:.4g}, max={ns['max']:.4g}"
+                f"mean={ns['mean']:.4g}, min={ns['min']:.4g}, "
+                f"median={ns['median']:.4g}, max={ns['max']:.4g}"
             )
         elif col.top_values:
-            top = ", ".join(f"{item['value']} ({item['count']})" for item in col.top_values[:3])
+            top = ", ".join(f"{item['value']}({item['count']})" for item in col.top_values[:3])
             stats_str = f"top=[{top}]"
         else:
-            stats_str = "no non-null values"
+            stats_str = "empty"
 
         lines.append(
             f"- {col.name} ({col.dtype}, {col.semantic_type}): "
             f"nulls={col.null_count} ({col.null_pct}%), unique={col.unique_count}; {stats_str}"
         )
 
-    preview_records = sanitize_json_payload(df.head(2).to_dict(orient="records"))
-    lines.append(f"Sample rows (first 2): {preview_records}")
+    if len(profile.column_profiles) > max_detailed_cols:
+        omitted = len(profile.column_profiles) - max_detailed_cols
+        lines.append(
+            f"... ({omitted} additional columns; use `get_statistical_summary(columns=[...])` "
+            "to inspect their stats)."
+        )
+
+    preview_cols = list(df.columns[:8])
+    sample_row = sanitize_json_payload(df[preview_cols].head(1).to_dict(orient="records"))
+    lines.append(f"Sample row (first cols): {sample_row}")
     return "\n".join(lines)

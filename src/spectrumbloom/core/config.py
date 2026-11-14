@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     llm_num_ctx: int = Field(default=4096, ge=1024, le=32768)
     llm_max_tokens: int = Field(default=1536, ge=128, le=8192)
-    llm_request_timeout_seconds: int = Field(default=120, ge=5, le=600)
+    llm_request_timeout_seconds: int = Field(default=90, ge=5, le=600)
     llm_enable_thinking: bool = False
 
     ollama_base_url: str = "http://localhost:11434"
@@ -59,11 +59,16 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
 
     # Fail-closed sandbox configuration
-    sandbox_backend: Literal["strict_subprocess", "docker", "nsjail"] = "strict_subprocess"
+    sandbox_backend: Literal["docker", "remote", "nsjail", "strict_subprocess", "disabled"] = (
+        "docker"
+    )
+    allow_trusted_local_subprocess: bool = False
     sandbox_timeout_seconds: int = Field(default=25, ge=1, le=120)
     sandbox_memory_limit_mb: int = Field(default=512, ge=128, le=4096)
     sandbox_max_output_chars: int = Field(default=20000, ge=1000, le=200000)
     sandbox_docker_image: str = "spectrumbloom-sandbox:latest"
+    sandbox_executor_url: str = ""
+    sandbox_executor_token: str = ""
 
     # Observability
     otel_service_name: str = "spectrumbloom-api"
@@ -85,18 +90,18 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_security_configuration(self) -> Settings:
+        weak_tokens = {
+            "changeme",
+            "change-me",
+            "replace-me",
+            "replace_me",
+            "secret",
+            "token",
+            "password",
+            "admin",
+        }
         token = (self.api_auth_token or "").strip()
         if self.app_env in {"production", "staging"}:
-            weak_tokens = {
-                "changeme",
-                "change-me",
-                "replace-me",
-                "replace_me",
-                "secret",
-                "token",
-                "password",
-                "admin",
-            }
             if not token or token.lower() in weak_tokens:
                 raise ValueError(
                     "API_AUTH_TOKEN must be configured with a strong secret when "
@@ -112,6 +117,12 @@ class Settings(BaseSettings):
                     "CORS_ALLOW_ORIGINS cannot include wildcard '*' when "
                     "APP_ENV is production or staging."
                 )
+            if self.sandbox_backend == "strict_subprocess":
+                raise ValueError(
+                    "SANDBOX_BACKEND=strict_subprocess is restricted to trusted local "
+                    "development and prohibited when APP_ENV is production or staging. "
+                    "Use 'docker', 'remote', 'nsjail', or 'disabled'."
+                )
         elif (
             self.app_env == "development"
             and self.api_host.strip() not in {"127.0.0.1", "localhost", "::1"}
@@ -121,6 +132,26 @@ class Settings(BaseSettings):
                 "Refusing to bind non-loopback API_HOST without API_AUTH_TOKEN in "
                 "development mode. Set API_AUTH_TOKEN or bind API_HOST=127.0.0.1."
             )
+
+        if self.sandbox_backend == "strict_subprocess" and not self.allow_trusted_local_subprocess:
+            raise ValueError(
+                "SANDBOX_BACKEND=strict_subprocess is restricted to trusted local development "
+                "and requires ALLOW_TRUSTED_LOCAL_SUBPROCESS=true. Use 'docker' for isolated "
+                "execution or 'disabled' for deterministic-only mode."
+            )
+
+        if self.sandbox_backend == "remote":
+            exec_url = (self.sandbox_executor_url or "").strip()
+            exec_token = (self.sandbox_executor_token or "").strip()
+            if not exec_url.startswith(("http://", "https://")):
+                raise ValueError(
+                    "SANDBOX_EXECUTOR_URL must be an http(s) URL when SANDBOX_BACKEND=remote."
+                )
+            if not exec_token or exec_token.lower() in weak_tokens or len(exec_token) < 16:
+                raise ValueError(
+                    "SANDBOX_EXECUTOR_TOKEN must be a strong secret (>= 16 chars) when "
+                    "SANDBOX_BACKEND=remote."
+                )
         return self
 
 

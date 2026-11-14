@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 
+import httpx
 import pandas as pd
 import pytest
+from fastapi.testclient import TestClient
 
 from spectrumbloom.core.config import Settings
 from spectrumbloom.domain.exceptions import (
@@ -15,8 +18,11 @@ from spectrumbloom.domain.exceptions import (
     SandboxTimeoutError,
     SandboxUnavailableError,
 )
+from spectrumbloom.sandbox import executor_app
 from spectrumbloom.sandbox.ast_guard import validate_code_safety
 from spectrumbloom.sandbox.service import (
+    DisabledSandbox,
+    RemoteDockerSandbox,
     SubprocessSandbox,
     _run_watched_windows_subprocess,
     _WindowsJobGuard,
@@ -76,6 +82,23 @@ print("done")
     assert res.result["mean"] == 25.0
     assert len(res.figures) == 1
     assert res.figures[0]["title"] == "Category Amounts"
+
+
+def test_sandbox_captures_assigned_fig_with_trailing_expression(sample_df: pd.DataFrame) -> None:
+    sb = SubprocessSandbox(timeout_seconds=30, memory_limit_mb=512)
+    res = sb.execute(
+        """
+import plotly.express as px
+
+fig = px.histogram(df, x="amount", title="Amount Histogram")
+float(df["amount"].quantile(0.9))
+""",
+        sample_df,
+    )
+    assert res.error is None
+    assert res.result == pytest.approx(float(sample_df["amount"].quantile(0.9)))
+    assert len(res.figures) == 1
+    assert res.figures[0]["title"] == "Amount Histogram"
 
 
 def test_sandbox_allows_safe_dataframe_replace(sample_df: pd.DataFrame) -> None:
@@ -206,3 +229,110 @@ def test_windows_job_guard_real_lifecycle() -> None:
             proc.kill()
             proc.wait(timeout=5)
         guard.close()
+
+
+@pytest.mark.parametrize(
+    "unsafe_code",
+    [
+        "import os\nx = os.environ",
+        "import os\nos.fork()",
+        "from pathlib import Path\nPath('/etc/passwd').read_bytes()",
+        "from pathlib import Path\nPath('out.txt').write_text('x')",
+        "import os\nos.execv('/bin/sh', ['sh'])",
+    ],
+)
+def test_ast_guard_blocks_env_exec_fork_and_pathlib_io(unsafe_code: str) -> None:
+    with pytest.raises(SandboxSecurityError):
+        validate_code_safety(unsafe_code)
+
+
+def test_create_sandbox_fails_closed_for_missing_docker_and_untrusted_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _cmd: None)
+    with pytest.raises(SandboxUnavailableError, match="docker"):
+        create_sandbox(Settings(sandbox_backend="docker"))
+
+    untrusted = Settings.model_construct(
+        app_env="production",
+        sandbox_backend="strict_subprocess",
+        allow_trusted_local_subprocess=True,
+        sandbox_timeout_seconds=10,
+        sandbox_memory_limit_mb=512,
+        sandbox_max_output_chars=20000,
+    )
+    with pytest.raises(SandboxUnavailableError, match="strict_subprocess"):
+        create_sandbox(untrusted)
+
+
+def test_disabled_sandbox_never_executes_or_falls_back(sample_df: pd.DataFrame) -> None:
+    sb = create_sandbox(Settings(sandbox_backend="disabled"))
+    assert isinstance(sb, DisabledSandbox)
+    assert sb.backend_name == "disabled"
+    with pytest.raises(SandboxUnavailableError, match="disabled"):
+        sb.execute("result = 1 + 1", sample_df)
+
+
+def test_sandbox_truncates_output_exhaustion(sample_df: pd.DataFrame) -> None:
+    sb = SubprocessSandbox(timeout_seconds=10, memory_limit_mb=512, max_output_chars=2000)
+    res = sb.execute("print('A' * 15000)", sample_df)
+    assert res.error is None
+    assert len(res.stdout) <= 2100
+    assert "truncated" in res.stdout
+
+
+def test_executor_app_enforces_token_and_remote_sandbox_roundtrips(
+    sample_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(executor_app, "_EXECUTOR_TOKEN", "strong-executor-token-1234")
+    client = TestClient(executor_app.app)
+
+    # Missing/wrong token fails closed
+    assert client.post("/execute", json={}).status_code == 401
+    assert (
+        client.post(
+            "/execute",
+            json={},
+            headers={"Authorization": "Bearer wrong-token"},
+        ).status_code
+        == 403
+    )
+
+    # Route RemoteDockerSandbox requests cleanly through TestClient
+    def _fake_execute_serialized(self, *, clean_code: str, data_bytes: bytes, data_format: str):
+        local_sb = SubprocessSandbox(timeout_seconds=10, memory_limit_mb=512)
+        return local_sb.execute(clean_code, sample_df)
+
+    monkeypatch.setattr(executor_app.DockerSandbox, "execute_serialized", _fake_execute_serialized)
+
+    def _mock_httpx_post(url: str, json: dict, headers: dict, timeout: float):
+        path = url.replace("http://executor.local", "")
+        resp = client.post(path, json=json, headers=headers)
+        return httpx.Response(
+            status_code=resp.status_code,
+            content=resp.content,
+            headers={"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(httpx, "post", _mock_httpx_post)
+
+    remote = RemoteDockerSandbox(
+        executor_url="http://executor.local",
+        executor_token="strong-executor-token-1234",
+        timeout_seconds=15,
+        memory_limit_mb=512,
+    )
+    res = remote.execute("result = int(len(df))", sample_df)
+    assert res.error is None
+    assert res.backend == "remote"
+    assert res.result == 6
+
+    # Transport unavailability fails closed without fallback
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *a, **kw: (_ for _ in ()).throw(httpx.ConnectError("connection refused")),
+    )
+    with pytest.raises(SandboxUnavailableError, match="no fallback"):
+        remote.execute("result = 1", sample_df)

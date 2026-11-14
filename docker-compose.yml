@@ -1,4 +1,34 @@
 services:
+  sandbox-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    image: spectrumbloom-sandbox:latest
+    command: ["true"]
+    restart: "no"
+
+  sandbox-executor:
+    build:
+      context: .
+      dockerfile: Dockerfile.executor
+    container_name: spectrumbloom-sandbox-executor
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+    environment:
+      SANDBOX_DOCKER_IMAGE: spectrumbloom-sandbox:latest
+      SANDBOX_EXECUTOR_TOKEN: ${SANDBOX_EXECUTOR_TOKEN:-local-compose-sandbox-executor-secret-token}
+    volumes:
+      # Isolated internal execution boundary only; never mounted into the API or UI containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - sandbox_internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -10,7 +40,13 @@ services:
       - .env.example
     environment:
       APP_ENV: development
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      API_HOST: 0.0.0.0
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-local-compose-api-auth-secret-token}
+      SANDBOX_BACKEND: ${COMPOSE_SANDBOX_BACKEND:-remote}
+      SANDBOX_EXECUTOR_URL: http://sandbox-executor:9100
+      SANDBOX_EXECUTOR_TOKEN: ${SANDBOX_EXECUTOR_TOKEN:-local-compose-sandbox-executor-secret-token}
+      OLLAMA_BASE_URL: ${COMPOSE_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      LLAMACPP_BASE_URL: ${COMPOSE_LLAMACPP_BASE_URL:-http://host.docker.internal:8080/v1}
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       LLM_MODEL: ${LLM_MODEL:-qwen3:4b-instruct}
       REDIS_URL: ${REDIS_URL:-}
@@ -20,6 +56,12 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - spectrumbloom_datasets:/app/data/datasets
+    depends_on:
+      sandbox-executor:
+        condition: service_healthy
+    networks:
+      - app_net
+      - sandbox_internal
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -35,6 +77,7 @@ services:
       - "127.0.0.1:8501:8501"
     environment:
       SPECTRUMBLOOM_API_URL: http://api:8000
+      SPECTRUMBLOOM_DEFAULT_API_TOKEN: ${API_AUTH_TOKEN:-local-compose-api-auth-secret-token}
     command:
       [
         "streamlit",
@@ -47,6 +90,14 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - app_net
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -58,10 +109,12 @@ services:
     container_name: spectrumbloom-redis
     profiles: ["persistence"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
     volumes:
       - spectrumbloom_redis:/data
+    networks:
+      - app_net
     restart: unless-stopped
 
   ollama:
@@ -69,9 +122,11 @@ services:
     container_name: spectrumbloom-ollama
     profiles: ["local-llm"]
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - spectrumbloom_ollama:/root/.ollama
+    networks:
+      - app_net
     restart: unless-stopped
 
   jaeger:
@@ -79,9 +134,18 @@ services:
     container_name: spectrumbloom-jaeger
     profiles: ["observability"]
     ports:
-      - "16686:16686"
-      - "4318:4318"
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:4318:4318"
+    networks:
+      - app_net
     restart: unless-stopped
+
+networks:
+  app_net:
+    driver: bridge
+  sandbox_internal:
+    driver: bridge
+    internal: true
 
 volumes:
   spectrumbloom_datasets:

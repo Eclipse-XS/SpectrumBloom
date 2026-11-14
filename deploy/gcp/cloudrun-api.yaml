@@ -35,7 +35,7 @@ spec:
             - name: LOCAL_DATASET_DIR
               value: /tmp/spectrumbloom/datasets
             - name: SANDBOX_BACKEND
-              value: strict_subprocess
+              value: disabled
             - name: LLM_PROVIDER
               value: openai
             - name: OPENAI_BASE_URL

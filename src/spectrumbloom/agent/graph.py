@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -13,15 +14,32 @@ import pandas as pd
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from pydantic import ValidationError
 
+from spectrumbloom.agent.deterministic_tools import (
+    format_statistical_focus,
+    run_aggregate_data,
+    run_statistical_test,
+)
 from spectrumbloom.agent.state import EDAGraphState
-from spectrumbloom.agent.tools import get_agent_tools
+from spectrumbloom.agent.tools import (
+    AggregateDataInput,
+    MLBaselineInput,
+    StandardChartInput,
+    StatisticalSummaryInput,
+    StatisticalTestInput,
+    get_agent_tools,
+)
+from spectrumbloom.domain.exceptions import SandboxTimeoutError, SandboxUnavailableError
 from spectrumbloom.domain.interfaces import CodeSandbox
 from spectrumbloom.domain.schemas import (
+    DatasetProfile,
     MLExperimentRequest,
     StatisticalReport,
     utc_now_iso,
 )
+from spectrumbloom.eda.charts import build_standard_chart, validate_plotly_figure_payload
+from spectrumbloom.eda.profiler import profile_dataframe
 from spectrumbloom.llm.prompts import build_eda_system_prompt
 from spectrumbloom.ml.experiments import run_ml_experiment
 
@@ -30,6 +48,7 @@ MAX_REPAIR_RETRIES = 2
 
 _THINK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
 _FAKE_IMAGE_MD_RE = re.compile(r"!\[[^\]]*\]\((?:https?://|data:image/)[^\)]+\)\s*", re.IGNORECASE)
+_ANY_IMAGE_MD_RE = re.compile(r"!\[[^\]]*\]\([^\)]+\)\s*")
 _TOOL_CALL_TAG_RE = re.compile(r"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>", re.IGNORECASE)
 _JSON_FENCE_RE = re.compile(r"```json\s*\n(\{[\s\S]*?\})\s*\n```", re.IGNORECASE)
 _PY_FENCE_RE = re.compile(r"```(?:python|py)\s*\n([\s\S]*?)\n```", re.IGNORECASE)
@@ -137,14 +156,19 @@ class EDAAgentGraph:
         df_provider: Callable[[], pd.DataFrame],
         dataset_context_provider: Callable[[], str],
         stats_provider: Callable[[], StatisticalReport],
+        profile_provider: Callable[[], DatasetProfile] | None = None,
         checkpointer: Any = None,
     ) -> None:
-        self.tools = get_agent_tools()
-        self.model_with_tools = chat_model.bind_tools(self.tools)
         self.sandbox = sandbox
+        self.allow_python_repl = sandbox.backend_name != "disabled"
+        self.tools = get_agent_tools(include_python_repl=self.allow_python_repl)
+        self.model_with_tools = chat_model.bind_tools(self.tools)
         self.df_provider = df_provider
         self.dataset_context_provider = dataset_context_provider
         self.stats_provider = stats_provider
+        self.profile_provider = profile_provider or (
+            lambda: profile_dataframe(self.df_provider(), filename="dataset")
+        )
         self.memory = checkpointer or MemorySaver()
         self.compiled = self._build_graph()
 
@@ -170,7 +194,7 @@ class EDAAgentGraph:
         return workflow.compile(checkpointer=self.memory)
 
     def _compact_history(self, messages: list[BaseMessage]) -> list[BaseMessage]:
-        """Keep prior Q/A summaries compact while preserving the active turn in full."""
+        """Keep complete prior Q/A pairs compact while preserving the active turn in full."""
         last_human_idx = -1
         for idx in range(len(messages) - 1, -1, -1):
             if isinstance(messages[idx], HumanMessage):
@@ -181,20 +205,26 @@ class EDAAgentGraph:
             return messages
 
         prior_qa: list[BaseMessage] = []
+        pending_human: HumanMessage | None = None
         for msg in messages[:last_human_idx]:
             if isinstance(msg, HumanMessage):
-                prior_qa.append(msg)
+                pending_human = msg
             elif isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
                 text = normalize_text(msg.content)
-                if text:
+                if pending_human is not None and text:
+                    prior_qa.append(pending_human)
                     prior_qa.append(AIMessage(content=text[:500]))
+                    pending_human = None
 
-        # Keep at most the last 2 completed Q/A turns (~4 messages) plus full active turn
+        # Keep at most the last 2 completed Q/A pairs (~4 messages) plus full active turn
         return [*prior_qa[-4:], *messages[last_human_idx:]]
 
     def _agent_node(self, state: EDAGraphState) -> dict[str, Any]:
         messages = list(state.get("messages", []))
-        system_prompt = build_eda_system_prompt(self.dataset_context_provider())
+        system_prompt = build_eda_system_prompt(
+            self.dataset_context_provider(),
+            allow_python_repl=self.allow_python_repl,
+        )
 
         # Keep single up-to-date SystemMessage at the front and compact prior tool traces
         filtered = [m for m in messages if not isinstance(m, SystemMessage)]
@@ -208,7 +238,10 @@ class EDAAgentGraph:
                 HumanMessage(
                     content=(
                         f"Your previous tool call failed with:\n{last_error}\n"
-                        "Fix the Python syntax, column name, or disallowed API call and try again."
+                        "Prefer deterministic tools (`aggregate_data`, "
+                        "`compute_statistical_test`, `create_standard_chart`, "
+                        "`get_statistical_summary`) or fix the column name / Python syntax "
+                        "and try again."
                     )
                 )
             )
@@ -217,12 +250,13 @@ class EDAAgentGraph:
 
         # Ensure fallback tool calls get attached as structured tool_calls if missing,
         # so LangGraph ToolMessages remain aligned with an AIMessage that declares tool_calls.
-        extracted = extract_tool_calls_with_fallback(response)
-        if extracted and not getattr(response, "tool_calls", None):
-            response = AIMessage(
-                content=normalize_text(getattr(response, "content", "")),
-                tool_calls=extracted,
-            )
+        if not getattr(response, "tool_calls", None):
+            extracted = extract_tool_calls_with_fallback(response)
+            if extracted:
+                response = AIMessage(
+                    content=normalize_text(getattr(response, "content", "")),
+                    tool_calls=extracted,
+                )
 
         return {
             "messages": [response],
@@ -241,45 +275,117 @@ class EDAAgentGraph:
         return "finalize"
 
     def _route_after_tools(self, state: EDAGraphState) -> str:
+        if state.get("terminal_error"):
+            return "finalize"
         if state.get("step_count", 0) >= MAX_TOOL_STEPS:
             return "finalize"
         if state.get("retries", 0) > MAX_REPAIR_RETRIES and state.get("last_error"):
             return "finalize"
         return "agent"
 
-    def _format_stats_focus(self, focus: str) -> str:
-        report = self.stats_provider()
-        data = report.model_dump()
-        key_map = {
-            "missingness": "missingness",
-            "correlations": "top_correlations",
-            "top_correlations": "top_correlations",
-            "outliers": "outliers",
-            "normality": "normality_checks",
-            "normality_checks": "normality_checks",
-            "group_tests": "group_tests",
-        }
-        if focus == "all":
-            compact = {
-                "missing_cols": [
-                    {k: c[k] for k in ("column", "null_count", "null_pct") if k in c}
-                    for c in data["missingness"].get("columns_with_missing", [])[:5]
-                ],
-                "top_correlations": data["top_correlations"][:4],
-                "outliers": data["outliers"][:4],
-                "multivariate_anomalies": data["multivariate_anomaly_count"],
-                "normality_checks": data["normality_checks"][:4],
-                "group_tests": data["group_tests"][:3],
-            }
-            encoded = json.dumps(compact, default=str)
-            return encoded[:1200]
+    def _execute_tool_call(
+        self,
+        name: str,
+        args: dict[str, Any],
+        df: pd.DataFrame,
+    ) -> tuple[str, Any, list[dict[str, Any]], str | None, str | None, bool, bool]:
+        """Dispatch one tool call cleanly with Pydantic validation and fail-closed isolation."""
+        if name == "python_repl":
+            code_str = str(args.get("code", ""))
+            try:
+                exec_res = self.sandbox.execute(code_str, df)
+            except (SandboxTimeoutError, SandboxUnavailableError) as exc:
+                err = str(exc)
+                return "", None, [], err, err, isinstance(exc, SandboxTimeoutError), True
 
-        section_key = key_map.get(focus, focus)
-        section_val = data.get(section_key, data.get("top_correlations", []))
-        if isinstance(section_val, list):
-            section_val = section_val[:8]
-        encoded = json.dumps(section_val, default=str)
-        return encoded[:1200]
+            valid_figs: list[dict[str, Any]] = []
+            fig_errors: list[str] = []
+            for fig in exec_res.figures:
+                ok, reason = validate_plotly_figure_payload(fig)
+                if ok:
+                    valid_figs.append(fig)
+                elif reason:
+                    fig_errors.append(reason)
+            err = exec_res.error
+            if fig_errors and not err:
+                err = f"Generated Plotly figure failed validation: {'; '.join(fig_errors)}"
+            return exec_res.stdout, exec_res.result, valid_figs, err, None, False, bool(err)
+
+        try:
+            if name == "get_statistical_summary":
+                validated_stat = StatisticalSummaryInput.model_validate(args)
+                res_dict = format_statistical_focus(
+                    df,
+                    self.profile_provider(),
+                    self.stats_provider(),
+                    focus=validated_stat.focus,
+                    columns=validated_stat.columns,
+                )
+                return json.dumps(res_dict, default=str), res_dict, [], None, None, False, False
+
+            if name == "aggregate_data":
+                validated_agg = AggregateDataInput.model_validate(args)
+                res_dict = run_aggregate_data(df, **validated_agg.model_dump())
+                return json.dumps(res_dict, default=str), res_dict, [], None, None, False, False
+
+            if name == "compute_statistical_test":
+                validated_test = StatisticalTestInput.model_validate(args)
+                res_dict = run_statistical_test(df, **validated_test.model_dump())
+                return json.dumps(res_dict, default=str), res_dict, [], None, None, False, False
+
+            if name == "create_standard_chart":
+                validated_chart = StandardChartInput.model_validate(args)
+                fig_payload = build_standard_chart(df, **validated_chart.model_dump())
+                ok, reason = validate_plotly_figure_payload(fig_payload)
+                if not ok:
+                    raise ValueError(reason or "Chart specification failed validation.")
+                res_dict = {
+                    "status": "chart_created",
+                    "title": fig_payload["title"],
+                    "chart_kind": fig_payload["chart_kind"],
+                }
+                return (
+                    json.dumps(res_dict, default=str),
+                    res_dict,
+                    [fig_payload],
+                    None,
+                    None,
+                    False,
+                    False,
+                )
+
+            if name == "run_ml_baseline":
+                validated_ml = MLBaselineInput.model_validate(args)
+                ml_res = run_ml_experiment(
+                    df,
+                    MLExperimentRequest(
+                        target_column=validated_ml.target_column,
+                        task_type=validated_ml.task_type,
+                    ),
+                )
+                valid_figs = [
+                    fig for fig in ml_res.figures if validate_plotly_figure_payload(fig)[0]
+                ]
+                res_dict = {
+                    "target_column": ml_res.target_column,
+                    "task_type": ml_res.task_type,
+                    "best_model": ml_res.best_model,
+                    "models": [m.model_dump() for m in ml_res.models],
+                    "top_features": ml_res.feature_importances[:5],
+                }
+                return (
+                    json.dumps(res_dict, default=str),
+                    res_dict,
+                    valid_figs,
+                    None,
+                    None,
+                    False,
+                    False,
+                )
+        except (ValidationError, Exception) as exc:
+            return "", None, [], str(exc), None, False, True
+
+        return "", None, [], f"Unknown tool '{name}'.", None, False, True
 
     def _tools_node(self, state: EDAGraphState) -> dict[str, Any]:
         last = state["messages"][-1]
@@ -288,9 +394,13 @@ class EDAAgentGraph:
         tool_messages: list[ToolMessage] = []
         traces: list[dict[str, Any]] = []
         new_figures: list[dict[str, Any]] = []
+        new_sigs: list[str] = []
+        seen_sigs = set(state.get("executed_signatures", []))
         retries = int(state.get("retries", 0))
         step_count = int(state.get("step_count", 0))
         last_error: str | None = None
+        terminal_error: str | None = state.get("terminal_error")
+        timed_out = bool(state.get("timed_out", False))
 
         df = self.df_provider()
 
@@ -304,63 +414,62 @@ class EDAAgentGraph:
                     args = json.loads(args)
                 except json.JSONDecodeError:
                     args = {"code": args}
+            if not isinstance(args, dict):
+                args = {}
+
+            sig_payload = json.dumps({"tool": name, "args": args}, sort_keys=True, default=str)
+            sig = hashlib.sha256(sig_payload.encode("utf-8")).hexdigest()[:24]
+            ok_sig = f"ok:{sig}"
+            err_sig = f"err:{sig}"
+
+            if ok_sig in seen_sigs:
+                tool_messages.append(
+                    ToolMessage(
+                        content=(
+                            f"Duplicate tool call '{name}' with identical arguments was skipped "
+                            "because it already succeeded in this turn. Summarize the prior result "
+                            "directly without calling more tools."
+                        ),
+                        tool_call_id=tc_id,
+                        name=name,
+                    )
+                )
+                continue
 
             started = time.perf_counter()
-            stdout = ""
-            result_val: Any = None
-            error_msg: str | None = None
-            figs: list[dict[str, Any]] = []
-            code_str = ""
-
-            if name == "python_repl":
-                code_str = str(args.get("code", ""))
-                exec_res = self.sandbox.execute(code_str, df)
-                stdout = exec_res.stdout
-                result_val = exec_res.result
-                error_msg = exec_res.error
-                figs = exec_res.figures
+            code_str = str(args.get("code", "")) if name == "python_repl" else ""
+            if err_sig in seen_sigs:
+                error_msg = (
+                    f"Duplicate failing tool call '{name}' with identical arguments suppressed. "
+                    "Change the tool, column names, or Python code."
+                )
+                stdout, result_val, figs = "", None, []
+                retries += 1
+                last_error = error_msg
+            else:
+                (
+                    stdout,
+                    result_val,
+                    figs,
+                    error_msg,
+                    term_err,
+                    call_timed_out,
+                    count_retry,
+                ) = self._execute_tool_call(name, args, df)
+                if term_err:
+                    terminal_error = term_err
+                if call_timed_out:
+                    timed_out = True
                 if error_msg:
-                    retries += 1
+                    if count_retry:
+                        retries += 1
                     last_error = error_msg
+                    seen_sigs.add(err_sig)
+                    new_sigs.append(err_sig)
                 else:
                     last_error = None
-            elif name == "get_statistical_summary":
-                focus = str(args.get("focus", "all"))
-                try:
-                    stdout = self._format_stats_focus(focus)
-                    result_val = json.loads(stdout)
-                except Exception as exc:
-                    error_msg = str(exc)
-                    last_error = error_msg
-            elif name == "run_ml_baseline":
-                target = str(args.get("target_column", ""))
-                task_type = str(args.get("task_type", "auto"))
-                if task_type not in {"auto", "classification", "regression"}:
-                    task_type = "auto"
-                try:
-                    ml_res = run_ml_experiment(
-                        df,
-                        MLExperimentRequest(
-                            target_column=target,
-                            task_type=task_type,  # type: ignore[arg-type]
-                        ),
-                    )
-                    figs = ml_res.figures
-                    result_val = {
-                        "target_column": ml_res.target_column,
-                        "task_type": ml_res.task_type,
-                        "best_model": ml_res.best_model,
-                        "models": [m.model_dump() for m in ml_res.models],
-                        "top_features": ml_res.feature_importances[:5],
-                    }
-                    stdout = json.dumps(result_val)
-                except Exception as exc:
-                    error_msg = str(exc)
-                    retries += 1
-                    last_error = error_msg
-            else:
-                error_msg = f"Unknown tool '{name}'."
-                last_error = error_msg
+                    seen_sigs.add(ok_sig)
+                    new_sigs.append(ok_sig)
 
             duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
             new_figures.extend(figs)
@@ -385,21 +494,29 @@ class EDAAgentGraph:
             if figs:
                 labels = ", ".join(f.get("title", "Figure") for f in figs)
                 parts.append(f"FIGURES_GENERATED: {labels}")
+            elif name == "python_repl":
+                parts.append(
+                    "FIGURES_GENERATED: none (only claim a chart was generated if "
+                    "FIGURES_GENERATED lists it)"
+                )
             if error_msg:
                 parts.append(f"ERROR:\n{error_msg}")
 
             content = "\n\n".join(parts) if parts else "Execution completed with no output."
-            if len(content) > 1800:
-                content = f"{content[:1750]}\n...[truncated for context budget]"
+            if len(content) > 2200:
+                content = f"{content[:2150]}\n...[truncated for context budget]"
             tool_messages.append(ToolMessage(content=content, tool_call_id=tc_id, name=name))
 
         return {
             "messages": tool_messages,
             "tool_traces": traces,
             "turn_figures": new_figures,
+            "executed_signatures": new_sigs,
             "retries": retries,
             "step_count": step_count,
             "last_error": last_error,
+            "terminal_error": terminal_error,
+            "timed_out": timed_out,
         }
 
     def _finalize_node(self, state: EDAGraphState) -> dict[str, Any]:
@@ -419,28 +536,53 @@ class EDAAgentGraph:
                     answer = candidate
                     break
 
-        if not answer:
-            traces = state.get("tool_traces", [])
-            figs = state.get("turn_figures", [])
-            if traces and traces[-1].get("error") and not figs:
-                answer = (
-                    "The analysis encountered an error during sandboxed execution and reached "
-                    f"the retry limit: {traces[-1]['error']}"
-                )
-            elif figs:
+        traces = state.get("tool_traces", [])
+        figs = state.get("turn_figures", [])
+        terminal_error = state.get("terminal_error")
+        timed_out = bool(state.get("timed_out", False))
+        status = "success"
+
+        if terminal_error:
+            status = "failed"
+            prefix = "Execution timed out" if timed_out else "Execution failed"
+            answer = f"{prefix}: {terminal_error}"
+        elif traces and all(t.get("error") for t in traces) and not figs:
+            status = "failed"
+            terminal_error = str(traces[-1].get("error") or "All tool executions failed.")
+            answer = (
+                "The analysis could not be completed because all tool executions failed. "
+                f"Last error: {terminal_error}"
+            )
+        elif not answer:
+            if figs:
                 titles = ", ".join(f.get("title", "Chart") for f in figs)
                 answer = f"Generated {len(figs)} interactive visualization(s): {titles}."
             elif traces:
-                last_out = traces[-1].get("stdout") or traces[-1].get("result")
+                ok_traces = [t for t in traces if not t.get("error")]
+                last_out = (
+                    (ok_traces[-1].get("stdout") or ok_traces[-1].get("result"))
+                    if ok_traces
+                    else None
+                )
                 answer = (
                     f"Analysis result:\n\n```\n{last_out}\n```"
                     if last_out
                     else "Analysis complete."
                 )
             else:
-                answer = "No response was generated by the model."
+                status = "failed"
+                terminal_error = "No response was generated by the model."
+                answer = terminal_error
 
-        return {"final_answer": answer}
+        if not figs and answer:
+            answer = _ANY_IMAGE_MD_RE.sub("", answer).strip()
+
+        return {
+            "final_answer": answer,
+            "status": status,
+            "terminal_error": terminal_error,
+            "timed_out": timed_out,
+        }
 
     def invoke(
         self,
@@ -460,9 +602,13 @@ class EDAAgentGraph:
             "messages": [HumanMessage(content=query)],
             "tool_traces": None,
             "turn_figures": None,
+            "executed_signatures": None,
             "retries": 0,
             "step_count": 0,
             "last_error": None,
+            "terminal_error": None,
+            "timed_out": False,
+            "status": "success",
             "final_answer": "",
         }
         return self.compiled.invoke(initial_state, config=config)

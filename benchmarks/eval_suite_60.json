@@ -1,0 +1,605 @@
+[
+  {
+    "id": "ecom_01_profile",
+    "dataset": "sample_ecommerce.csv",
+    "category": "profiling",
+    "thread_group": "ecom_single_01",
+    "turn_index": 1,
+    "prompt": "How many rows, columns, and duplicate rows are in this dataset?",
+    "assertion": {"op": "shape_and_dups"}
+  },
+  {
+    "id": "ecom_02_missing",
+    "dataset": "sample_ecommerce.csv",
+    "category": "missingness",
+    "thread_group": "ecom_single_02",
+    "turn_index": 1,
+    "prompt": "Which columns contain missing values, and how many missing values does each have?",
+    "assertion": {"op": "missing_map"}
+  },
+  {
+    "id": "ecom_03_filter",
+    "dataset": "sample_ecommerce.csv",
+    "category": "filtering",
+    "thread_group": "ecom_single_03",
+    "turn_index": 1,
+    "prompt": "Count how many rows have category equal to 'Electronics' and channel equal to 'Web'.",
+    "assertion": {"op": "filtered_count", "filters": [["category", "==", "Electronics"], ["channel", "==", "Web"]]}
+  },
+  {
+    "id": "ecom_04_agg",
+    "dataset": "sample_ecommerce.csv",
+    "category": "aggregation",
+    "thread_group": "ecom_single_04",
+    "turn_index": 1,
+    "prompt": "Compute the mean revenue grouped by category and state which category has the highest mean revenue.",
+    "assertion": {"op": "groupby_top", "group_by": "category", "metric": "revenue", "agg": "mean"}
+  },
+  {
+    "id": "ecom_05_corr",
+    "dataset": "sample_ecommerce.csv",
+    "category": "correlation",
+    "thread_group": "ecom_single_05",
+    "turn_index": 1,
+    "prompt": "Compute the Pearson correlation coefficient and p-value between unit_price and revenue.",
+    "assertion": {"op": "corr", "method": "pearson", "col_a": "unit_price", "col_b": "revenue"}
+  },
+  {
+    "id": "ecom_06_outliers",
+    "dataset": "sample_ecommerce.csv",
+    "category": "outliers",
+    "thread_group": "ecom_single_06",
+    "turn_index": 1,
+    "prompt": "Using the 1.5 * IQR rule on revenue, how many outlier rows are there?",
+    "assertion": {"op": "outliers_iqr", "column": "revenue"}
+  },
+  {
+    "id": "ecom_07_stat_test",
+    "dataset": "sample_ecommerce.csv",
+    "category": "statistical_test",
+    "thread_group": "ecom_single_07",
+    "turn_index": 1,
+    "prompt": "Run a Kruskal-Wallis test comparing revenue across region groups and report the statistic and p-value.",
+    "assertion": {"op": "group_test", "test": "kruskal", "metric": "revenue", "group": "region"}
+  },
+  {
+    "id": "ecom_08_chart",
+    "dataset": "sample_ecommerce.csv",
+    "category": "visualization",
+    "thread_group": "ecom_single_08",
+    "turn_index": 1,
+    "prompt": "Create an interactive Plotly bar chart showing mean revenue by category.",
+    "assertion": {"op": "chart", "expected_chart_kinds": ["bar"]}
+  },
+  {
+    "id": "ecom_09_mt1",
+    "dataset": "sample_ecommerce.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_ecom",
+    "turn_index": 1,
+    "prompt": "Which region has the highest total (sum) revenue?",
+    "assertion": {"op": "groupby_top", "group_by": "region", "metric": "revenue", "agg": "sum"}
+  },
+  {
+    "id": "ecom_10_mt2",
+    "dataset": "sample_ecommerce.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_ecom",
+    "turn_index": 2,
+    "prompt": "For that highest-revenue region, what is its mean customer_age?",
+    "assertion": {"op": "top_group_metric", "group_by": "region", "rank_metric": "revenue", "rank_agg": "sum", "target_metric": "customer_age", "target_agg": "mean"}
+  },
+  {
+    "id": "ecom_11_invalid",
+    "dataset": "sample_ecommerce.csv",
+    "category": "invalid_input",
+    "thread_group": "ecom_single_11",
+    "turn_index": 1,
+    "prompt": "Compute the mean of column 'nonexistent_profit_margin'.",
+    "assertion": {"op": "missing_column_handled", "bad_column": "nonexistent_profit_margin"}
+  },
+  {
+    "id": "peng_01_profile",
+    "dataset": "palmer_penguins.csv",
+    "category": "profiling",
+    "thread_group": "peng_single_01",
+    "turn_index": 1,
+    "prompt": "How many rows, columns, and total missing cells exist in the dataset?",
+    "assertion": {"op": "shape_and_missing"}
+  },
+  {
+    "id": "peng_02_missing",
+    "dataset": "palmer_penguins.csv",
+    "category": "missingness",
+    "thread_group": "peng_single_02",
+    "turn_index": 1,
+    "prompt": "How many rows have missing values in the sex column?",
+    "assertion": {"op": "col_null_count", "column": "sex"}
+  },
+  {
+    "id": "peng_03_filter",
+    "dataset": "palmer_penguins.csv",
+    "category": "filtering",
+    "thread_group": "peng_single_03",
+    "turn_index": 1,
+    "prompt": "Filter rows where species is 'Gentoo' and sex is 'FEMALE'. What is the mean body_mass_g for this subset?",
+    "assertion": {"op": "filtered_agg", "filters": [["species", "==", "Gentoo"], ["sex", "==", "FEMALE"]], "metric": "body_mass_g", "agg": "mean"}
+  },
+  {
+    "id": "peng_04_agg",
+    "dataset": "palmer_penguins.csv",
+    "category": "aggregation",
+    "thread_group": "peng_single_04",
+    "turn_index": 1,
+    "prompt": "What is the median flipper_length_mm for each species, and which species has the highest median?",
+    "assertion": {"op": "groupby_top", "group_by": "species", "metric": "flipper_length_mm", "agg": "median"}
+  },
+  {
+    "id": "peng_05_corr",
+    "dataset": "palmer_penguins.csv",
+    "category": "correlation",
+    "thread_group": "peng_single_05",
+    "turn_index": 1,
+    "prompt": "Compute the Pearson correlation coefficient between flipper_length_mm and body_mass_g.",
+    "assertion": {"op": "corr", "method": "pearson", "col_a": "flipper_length_mm", "col_b": "body_mass_g"}
+  },
+  {
+    "id": "peng_06_outliers",
+    "dataset": "palmer_penguins.csv",
+    "category": "outliers",
+    "thread_group": "peng_single_06",
+    "turn_index": 1,
+    "prompt": "Check bill_depth_mm using the 1.5 * IQR rule. How many outlier values exist?",
+    "assertion": {"op": "outliers_iqr", "column": "bill_depth_mm"}
+  },
+  {
+    "id": "peng_07_stat_test",
+    "dataset": "palmer_penguins.csv",
+    "category": "statistical_test",
+    "thread_group": "peng_single_07",
+    "turn_index": 1,
+    "prompt": "Run a one-way ANOVA test comparing body_mass_g across species groups and report the F-statistic and p-value.",
+    "assertion": {"op": "group_test", "test": "anova", "metric": "body_mass_g", "group": "species"}
+  },
+  {
+    "id": "peng_08_chart",
+    "dataset": "palmer_penguins.csv",
+    "category": "visualization",
+    "thread_group": "peng_single_08",
+    "turn_index": 1,
+    "prompt": "Create a Plotly scatter plot of flipper_length_mm on X vs body_mass_g on Y colored by species.",
+    "assertion": {"op": "chart", "expected_chart_kinds": ["scatter"]}
+  },
+  {
+    "id": "peng_09_mt1",
+    "dataset": "palmer_penguins.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_peng",
+    "turn_index": 1,
+    "prompt": "Which island has the highest count of penguins?",
+    "assertion": {"op": "groupby_top", "group_by": "island", "metric": "species", "agg": "count"}
+  },
+  {
+    "id": "peng_10_mt2",
+    "dataset": "palmer_penguins.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_peng",
+    "turn_index": 2,
+    "prompt": "For that island with the most penguins, what is its mean bill_length_mm?",
+    "assertion": {"op": "top_group_metric", "group_by": "island", "rank_metric": "species", "rank_agg": "count", "target_metric": "bill_length_mm", "target_agg": "mean"}
+  },
+  {
+    "id": "peng_11_invalid",
+    "dataset": "palmer_penguins.csv",
+    "category": "invalid_input",
+    "thread_group": "peng_single_11",
+    "turn_index": 1,
+    "prompt": "Run a Pearson correlation between body_mass_g and nonexistent_feather_weight.",
+    "assertion": {"op": "missing_column_handled", "bad_column": "nonexistent_feather_weight"}
+  },
+  {
+    "id": "bc_01_profile",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "profiling",
+    "thread_group": "bc_single_01",
+    "turn_index": 1,
+    "prompt": "How many records belong to each diagnosis group ('malignant' vs 'benign')?",
+    "assertion": {"op": "groupby_all", "group_by": "diagnosis", "metric": "mean radius", "agg": "count"}
+  },
+  {
+    "id": "bc_02_agg",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "aggregation",
+    "thread_group": "bc_single_02",
+    "turn_index": 1,
+    "prompt": "Compare the mean of 'mean area' grouped by diagnosis ('malignant' and 'benign').",
+    "assertion": {"op": "groupby_all", "group_by": "diagnosis", "metric": "mean area", "agg": "mean"}
+  },
+  {
+    "id": "bc_03_filter",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "filtering",
+    "thread_group": "bc_single_03",
+    "turn_index": 1,
+    "prompt": "How many rows have 'mean radius' > 20 and diagnosis == 'malignant'?",
+    "assertion": {"op": "filtered_count", "filters": [["mean radius", ">", 20], ["diagnosis", "==", "malignant"]]}
+  },
+  {
+    "id": "bc_04_corr",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "correlation",
+    "thread_group": "bc_single_04",
+    "turn_index": 1,
+    "prompt": "Compute the Pearson correlation between 'mean radius' and 'mean perimeter'.",
+    "assertion": {"op": "corr", "method": "pearson", "col_a": "mean radius", "col_b": "mean perimeter"}
+  },
+  {
+    "id": "bc_05_outliers",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "outliers",
+    "thread_group": "bc_single_05",
+    "turn_index": 1,
+    "prompt": "Using the 1.5 * IQR rule on 'mean area', how many outlier rows exist?",
+    "assertion": {"op": "outliers_iqr", "column": "mean area"}
+  },
+  {
+    "id": "bc_06_stat_test",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "statistical_test",
+    "thread_group": "bc_single_06",
+    "turn_index": 1,
+    "prompt": "Run a Mann-Whitney U test comparing 'mean concavity' between diagnosis groups 'malignant' and 'benign'.",
+    "assertion": {"op": "group_test", "test": "mannwhitney", "metric": "mean concavity", "group": "diagnosis", "group_a": "malignant", "group_b": "benign"}
+  },
+  {
+    "id": "bc_07_chart",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "visualization",
+    "thread_group": "bc_single_07",
+    "turn_index": 1,
+    "prompt": "Create a Plotly box plot showing 'mean radius' across diagnosis.",
+    "assertion": {"op": "chart", "expected_chart_kinds": ["box", "violin"]}
+  },
+  {
+    "id": "bc_08_multistep",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "multi_step",
+    "thread_group": "bc_single_08",
+    "turn_index": 1,
+    "prompt": "Compute the mean 'worst area' for malignant vs benign diagnosis and state the ratio (malignant mean / benign mean).",
+    "assertion": {"op": "group_ratio", "group_by": "diagnosis", "metric": "worst area", "agg": "mean", "num_group": "malignant", "den_group": "benign"}
+  },
+  {
+    "id": "bc_09_mt1",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_bc",
+    "turn_index": 1,
+    "prompt": "Filter to diagnosis == 'malignant' and compute the median of 'worst radius'.",
+    "assertion": {"op": "filtered_agg", "filters": [["diagnosis", "==", "malignant"]], "metric": "worst radius", "agg": "median"}
+  },
+  {
+    "id": "bc_10_mt2",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_bc",
+    "turn_index": 2,
+    "prompt": "Now compute the median 'worst radius' for 'benign' diagnosis to compare.",
+    "assertion": {"op": "filtered_agg", "filters": [["diagnosis", "==", "benign"]], "metric": "worst radius", "agg": "median"}
+  },
+  {
+    "id": "bc_11_invalid",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "invalid_input",
+    "thread_group": "bc_single_11",
+    "turn_index": 1,
+    "prompt": "Compute the median of column 'biopsy_stage_missing_col'.",
+    "assertion": {"op": "missing_column_handled", "bad_column": "biopsy_stage_missing_col"}
+  },
+  {
+    "id": "wine_01_profile",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "profiling",
+    "thread_group": "wine_single_01",
+    "turn_index": 1,
+    "prompt": "How many wine samples are in each cultivar class?",
+    "assertion": {"op": "groupby_all", "group_by": "cultivar", "metric": "alcohol", "agg": "count"}
+  },
+  {
+    "id": "wine_02_agg",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "aggregation",
+    "thread_group": "wine_single_02",
+    "turn_index": 1,
+    "prompt": "What is the mean proline for each cultivar, and which cultivar has the highest mean proline?",
+    "assertion": {"op": "groupby_top", "group_by": "cultivar", "metric": "proline", "agg": "mean"}
+  },
+  {
+    "id": "wine_03_filter",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "filtering",
+    "thread_group": "wine_single_03",
+    "turn_index": 1,
+    "prompt": "Count how many wines have alcohol >= 14.0 and color_intensity > 5.0.",
+    "assertion": {"op": "filtered_count", "filters": [["alcohol", ">=", 14.0], ["color_intensity", ">", 5.0]]}
+  },
+  {
+    "id": "wine_04_corr",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "correlation",
+    "thread_group": "wine_single_04",
+    "turn_index": 1,
+    "prompt": "Compute the Spearman correlation between total_phenols and flavanoids.",
+    "assertion": {"op": "corr", "method": "spearman", "col_a": "total_phenols", "col_b": "flavanoids"}
+  },
+  {
+    "id": "wine_05_outliers",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "outliers",
+    "thread_group": "wine_single_05",
+    "turn_index": 1,
+    "prompt": "Using the 1.5 * IQR rule on malic_acid, how many outlier rows are detected?",
+    "assertion": {"op": "outliers_iqr", "column": "malic_acid"}
+  },
+  {
+    "id": "wine_06_kruskal",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "statistical_test",
+    "thread_group": "wine_single_06",
+    "turn_index": 1,
+    "prompt": "Run a Kruskal-Wallis test comparing alcohol across cultivar groups.",
+    "assertion": {"op": "group_test", "test": "kruskal", "metric": "alcohol", "group": "cultivar"}
+  },
+  {
+    "id": "wine_07_normality",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "statistical_test",
+    "thread_group": "wine_single_07",
+    "turn_index": 1,
+    "prompt": "Run a normality test on proline and report the statistic and p-value.",
+    "assertion": {"op": "normality", "column": "proline"}
+  },
+  {
+    "id": "wine_08_chart",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "visualization",
+    "thread_group": "wine_single_08",
+    "turn_index": 1,
+    "prompt": "Create a Plotly correlation heatmap for numeric wine chemical features.",
+    "assertion": {"op": "chart", "expected_chart_kinds": ["heatmap"]}
+  },
+  {
+    "id": "wine_09_mt1",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_wine",
+    "turn_index": 1,
+    "prompt": "Which cultivar has the lowest mean flavanoids?",
+    "assertion": {"op": "groupby_bottom", "group_by": "cultivar", "metric": "flavanoids", "agg": "mean"}
+  },
+  {
+    "id": "wine_10_mt2",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_wine",
+    "turn_index": 2,
+    "prompt": "What is the mean color_intensity specifically for that cultivar?",
+    "assertion": {"op": "bottom_group_metric", "group_by": "cultivar", "rank_metric": "flavanoids", "rank_agg": "mean", "target_metric": "color_intensity", "target_agg": "mean"}
+  },
+  {
+    "id": "wine_11_invalid",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "invalid_input",
+    "thread_group": "wine_single_11",
+    "turn_index": 1,
+    "prompt": "Plot a histogram of 'sugar_residual_g_l'.",
+    "assertion": {"op": "missing_column_handled", "bad_column": "sugar_residual_g_l"}
+  },
+  {
+    "id": "macro_01_profile",
+    "dataset": "us_macro_fred.csv",
+    "category": "profiling",
+    "thread_group": "macro_single_01",
+    "turn_index": 1,
+    "prompt": "How many rows, columns, and missing cells are in this macroeconomic dataset?",
+    "assertion": {"op": "shape_and_missing"}
+  },
+  {
+    "id": "macro_02_filter",
+    "dataset": "us_macro_fred.csv",
+    "category": "filtering",
+    "thread_group": "macro_single_02",
+    "turn_index": 1,
+    "prompt": "How many quarters had unemployment rate (unemp) >= 8.0?",
+    "assertion": {"op": "filtered_count", "filters": [["unemp", ">=", 8.0]]}
+  },
+  {
+    "id": "macro_03_agg",
+    "dataset": "us_macro_fred.csv",
+    "category": "aggregation",
+    "thread_group": "macro_single_03",
+    "turn_index": 1,
+    "prompt": "What are the mean and maximum values of infl?",
+    "assertion": {"op": "col_stats", "column": "infl", "metrics": ["mean", "max"]}
+  },
+  {
+    "id": "macro_04_corr",
+    "dataset": "us_macro_fred.csv",
+    "category": "correlation",
+    "thread_group": "macro_single_04",
+    "turn_index": 1,
+    "prompt": "Compute the Spearman correlation between realgdp and cpi.",
+    "assertion": {"op": "corr", "method": "spearman", "col_a": "realgdp", "col_b": "cpi"}
+  },
+  {
+    "id": "macro_05_outliers",
+    "dataset": "us_macro_fred.csv",
+    "category": "outliers",
+    "thread_group": "macro_single_05",
+    "turn_index": 1,
+    "prompt": "Using the 1.5 * IQR rule on infl, how many outlier quarters exist?",
+    "assertion": {"op": "outliers_iqr", "column": "infl"}
+  },
+  {
+    "id": "macro_06_normality",
+    "dataset": "us_macro_fred.csv",
+    "category": "statistical_test",
+    "thread_group": "macro_single_06",
+    "turn_index": 1,
+    "prompt": "Run a normality test on unemp and report its statistic and p-value.",
+    "assertion": {"op": "normality", "column": "unemp"}
+  },
+  {
+    "id": "macro_07_chart",
+    "dataset": "us_macro_fred.csv",
+    "category": "visualization",
+    "thread_group": "macro_single_07",
+    "turn_index": 1,
+    "prompt": "Create a Plotly histogram of tbilrate.",
+    "assertion": {"op": "chart", "expected_chart_kinds": ["histogram"]}
+  },
+  {
+    "id": "macro_08_multistep",
+    "dataset": "us_macro_fred.csv",
+    "category": "multi_step",
+    "thread_group": "macro_single_08",
+    "turn_index": 1,
+    "prompt": "Compare the mean unemp for quarters with year >= 2000 versus quarters with year < 2000.",
+    "assertion": {"op": "split_means", "column": "unemp", "split_col": "year", "split_val": 2000}
+  },
+  {
+    "id": "macro_09_mt1",
+    "dataset": "us_macro_fred.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_macro",
+    "turn_index": 1,
+    "prompt": "Filter to quarters with year >= 2000 and compute the mean realgdp.",
+    "assertion": {"op": "filtered_agg", "filters": [["year", ">=", 2000]], "metric": "realgdp", "agg": "mean"}
+  },
+  {
+    "id": "macro_10_mt2",
+    "dataset": "us_macro_fred.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_macro",
+    "turn_index": 2,
+    "prompt": "Still filtering to year >= 2000, what is the maximum unemp?",
+    "assertion": {"op": "filtered_agg", "filters": [["year", ">=", 2000]], "metric": "unemp", "agg": "max"}
+  },
+  {
+    "id": "macro_11_invalid",
+    "dataset": "us_macro_fred.csv",
+    "category": "invalid_input",
+    "thread_group": "macro_single_11",
+    "turn_index": 1,
+    "prompt": "Compute Pearson correlation between realgdp and nonexistent_bitcoin_price.",
+    "assertion": {"op": "missing_column_handled", "bad_column": "nonexistent_bitcoin_price"}
+  },
+  {
+    "id": "co2_01_profile",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "profiling",
+    "thread_group": "co2_single_01",
+    "turn_index": 1,
+    "prompt": "How many rows and columns are in the Mauna Loa CO2 dataset?",
+    "assertion": {"op": "shape_and_missing"}
+  },
+  {
+    "id": "co2_02_missing",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "missingness",
+    "thread_group": "co2_single_02",
+    "turn_index": 1,
+    "prompt": "How many missing (null) observations exist in the co2 column?",
+    "assertion": {"op": "col_null_count", "column": "co2"}
+  },
+  {
+    "id": "co2_03_filter",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "filtering",
+    "thread_group": "co2_single_03",
+    "turn_index": 1,
+    "prompt": "Count how many rows have co2 > 360.",
+    "assertion": {"op": "filtered_count", "filters": [["co2", ">", 360]]}
+  },
+  {
+    "id": "co2_04_agg",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "aggregation",
+    "thread_group": "co2_single_04",
+    "turn_index": 1,
+    "prompt": "What are the mean, median, and maximum non-null values of co2?",
+    "assertion": {"op": "col_stats", "column": "co2", "metrics": ["mean", "median", "max"]}
+  },
+  {
+    "id": "co2_05_corr",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "correlation",
+    "thread_group": "co2_single_05",
+    "turn_index": 1,
+    "prompt": "Compute the Pearson correlation coefficient between year and co2.",
+    "assertion": {"op": "corr", "method": "pearson", "col_a": "year", "col_b": "co2"}
+  },
+  {
+    "id": "co2_06_outliers",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "outliers",
+    "thread_group": "co2_single_06",
+    "turn_index": 1,
+    "prompt": "Check co2 using the 1.5 * IQR rule. How many outlier rows exist?",
+    "assertion": {"op": "outliers_iqr", "column": "co2"}
+  },
+  {
+    "id": "co2_07_normality",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "statistical_test",
+    "thread_group": "co2_single_07",
+    "turn_index": 1,
+    "prompt": "Run a normality test on co2 and report the test statistic and p-value.",
+    "assertion": {"op": "normality", "column": "co2"}
+  },
+  {
+    "id": "co2_08_chart",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "visualization",
+    "thread_group": "co2_single_08",
+    "turn_index": 1,
+    "prompt": "Create a Plotly line chart plotting co2 over date.",
+    "assertion": {"op": "chart", "expected_chart_kinds": ["line", "scatter"]}
+  },
+  {
+    "id": "co2_09_multistep",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "multi_step",
+    "thread_group": "co2_single_09",
+    "turn_index": 1,
+    "prompt": "Compute mean co2 for year == 2000 and mean co2 for year == 1960, and state the difference (2000 minus 1960).",
+    "assertion": {"op": "group_diff", "group_col": "year", "metric": "co2", "val_a": 2000, "val_b": 1960}
+  },
+  {
+    "id": "co2_10_mt1",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_co2",
+    "turn_index": 1,
+    "prompt": "Filter to year == 1990 and compute the mean co2.",
+    "assertion": {"op": "filtered_agg", "filters": [["year", "==", 1990]], "metric": "co2", "agg": "mean"}
+  },
+  {
+    "id": "co2_11_mt2",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "multi_turn",
+    "thread_group": "mt_co2",
+    "turn_index": 2,
+    "prompt": "Now compare that with the mean co2 when year == 1960.",
+    "assertion": {"op": "filtered_agg", "filters": [["year", "==", 1960]], "metric": "co2", "agg": "mean"}
+  },
+  {
+    "id": "co2_12_invalid",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "invalid_input",
+    "thread_group": "co2_single_12",
+    "turn_index": 1,
+    "prompt": "Group by 'continent' and compute the mean co2.",
+    "assertion": {"op": "missing_column_handled", "bad_column": "continent"}
+  }
+]

@@ -21,6 +21,7 @@ from spectrumbloom.domain.exceptions import (
     DatasetValidationError,
     LLMConfigurationError,
     LLMInvocationError,
+    LLMTimeoutError,
     MLExperimentError,
     SandboxTimeoutError,
     SandboxUnavailableError,
@@ -164,6 +165,13 @@ def create_app(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)}
         )
 
+    @app.exception_handler(LLMTimeoutError)
+    async def _handle_llm_timeout(_req: Request, exc: LLMTimeoutError):
+        return JSONResponse(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            content={"detail": str(exc)},
+        )
+
     @app.exception_handler(LLMInvocationError)
     async def _handle_llm_error(_req: Request, exc: LLMInvocationError):
         return JSONResponse(status_code=status.HTTP_502_BAD_GATEWAY, content={"detail": str(exc)})
@@ -187,6 +195,7 @@ def create_app(
                         "status": "connected" if store_ok else "unavailable",
                     },
                     "sandbox_backend": sandbox.backend_name,
+                    "sandbox_dynamic_python_enabled": sandbox.backend_name != "disabled",
                     "llm": llm_status,
                     "observability": {
                         "opentelemetry": True,

@@ -68,7 +68,10 @@ def test_verify_api_token_fails_closed_in_production_even_if_mutated() -> None:
         otel_service_name="spectrumbloom-test",
         otel_exporter_otlp_endpoint="",
         otel_console_export=False,
-        sandbox_backend="strict_subprocess",
+        sandbox_backend="docker",
+        allow_trusted_local_subprocess=False,
+        sandbox_executor_url="",
+        sandbox_executor_token="",
         sandbox_timeout_seconds=10,
         sandbox_memory_limit_mb=512,
         sandbox_max_output_chars=20000,
@@ -98,3 +101,72 @@ def test_verify_api_token_fails_closed_in_production_even_if_mutated() -> None:
     with TestClient(app) as client:
         resp = client.get("/api/v1/sessions")
         assert resp.status_code == 503
+
+
+def test_default_sandbox_backend_is_docker() -> None:
+    defaults = Settings()
+    assert defaults.sandbox_backend == "docker"
+    assert defaults.allow_trusted_local_subprocess is False
+
+
+def test_strict_subprocess_prohibited_in_production_and_without_explicit_flag() -> None:
+    with pytest.raises(ValidationError, match="strict_subprocess"):
+        Settings(
+            app_env="production",
+            api_auth_token="prod-secret-token-with-sufficient-length",
+            cors_allow_origins="https://spectrumbloom.example.com",
+            sandbox_backend="strict_subprocess",
+            allow_trusted_local_subprocess=True,
+        )
+
+    with pytest.raises(ValidationError, match="ALLOW_TRUSTED_LOCAL_SUBPROCESS"):
+        Settings(
+            app_env="development",
+            sandbox_backend="strict_subprocess",
+            allow_trusted_local_subprocess=False,
+        )
+
+    allowed_dev = Settings(
+        app_env="development",
+        sandbox_backend="strict_subprocess",
+        allow_trusted_local_subprocess=True,
+    )
+    assert allowed_dev.sandbox_backend == "strict_subprocess"
+
+
+def test_remote_sandbox_requires_url_and_strong_token() -> None:
+    with pytest.raises(ValidationError, match="SANDBOX_EXECUTOR_URL"):
+        Settings(
+            app_env="production",
+            api_auth_token="prod-secret-token-with-sufficient-length",
+            cors_allow_origins="https://spectrumbloom.example.com",
+            sandbox_backend="remote",
+            sandbox_executor_url="",
+            sandbox_executor_token="strong-executor-token-1234",
+        )
+
+    with pytest.raises(ValidationError, match="SANDBOX_EXECUTOR_TOKEN"):
+        Settings(
+            app_env="production",
+            api_auth_token="prod-secret-token-with-sufficient-length",
+            cors_allow_origins="https://spectrumbloom.example.com",
+            sandbox_backend="remote",
+            sandbox_executor_url="http://sandbox-executor:8090",
+            sandbox_executor_token="short",
+        )
+
+
+def test_disabled_sandbox_exposes_flag_in_health_endpoint() -> None:
+    settings = Settings(
+        app_env="production",
+        api_auth_token="prod-secret-token-with-sufficient-length",
+        cors_allow_origins="https://spectrumbloom.example.com",
+        sandbox_backend="disabled",
+    )
+    app = create_app(settings, in_memory_telemetry=True)
+    with TestClient(app) as client:
+        health = client.get("/health")
+        assert health.status_code == 200
+        body = health.json()
+        assert body["sandbox_backend"] == "disabled"
+        assert body["sandbox_dynamic_python_enabled"] is False

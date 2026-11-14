@@ -9,22 +9,44 @@ SpectrumBloom is an independently engineered modular monolith built with **FastA
 ## Architecture Overview
 
 ```text
-Streamlit UI (src/spectrumbloom/ui/app.py)
-   │ HTTP REST (httpx)
+Streamlit UI (src/spectrumbloom/ui/app.py) — 5-tab interactive studio
+   │ HTTP REST (httpx + Bearer Token)
    ▼
-FastAPI Gateway (src/spectrumbloom/api/routes.py)  ── Bearer Auth + CORS + OTel
+FastAPI Gateway (src/spectrumbloom/api/routes.py)  ── Bearer Auth + CORS + Prod/Host Guards + OTel
    │
    ▼
 SpectrumBloomService (src/spectrumbloom/services/session_service.py)
    ├── Repositories (repositories/)       : Thread-safe Memory / Redis sessions + Local / S3 datasets
    ├── Deterministic EDA (eda/)           : Zip-bomb guarded loader, profiler, stats engine, Plotly builder
    ├── Leak-Safe ML Lab (ml/)             : Pipeline + ColumnTransformer CV baseline benchmark + permutation imp
-   ├── LangGraph Agent (agent/, llm/)     : UnifiedLLMProvider + bounded retry loop + context compaction
-   ├── Fail-Closed Sandbox (sandbox/)     : AST gate + Parquet IPC + python -I + JobObject/rlimits/nsjail
+   ├── LangGraph Agent (agent/, llm/)     : Deterministic-first tools + conditional python_repl + timeout/retry bounds
+   ├── Isolated Sandbox Boundary (sandbox/):
+   │      ├── Compose: RemoteDockerSandbox ─(internal HTTP + token)─▶ sandbox-executor ─▶ DockerSandbox (no sock on API!)
+   │      ├── Host:    DockerSandbox (--network=none --read-only --cap-drop=ALL --pids-limit=64 --cpus=1 --memory)
+   │      ├── Public:  DisabledSandbox (HF Spaces / Cloud Run — deterministic EDA + ML only, zero arbitrary Python)
+   │      └── Dev:     SubprocessSandbox (strict_subprocess restricted to APP_ENV=development; JobObj/POSIX rlimits)
    └── Eval & Telemetry (services/, core/): Deterministic turn verifier, DeepEval Ollama judge, OTel + Langfuse
 ```
 
-See full architectural details in [docs/architecture.md](docs/architecture.md), security & clean-room audit findings in [docs/reference-audit.md](docs/reference-audit.md), and local 4 GB VRAM quantization results in [docs/optimization-report.md](docs/optimization-report.md).
+See full architectural details in [docs/architecture.md](docs/architecture.md), security & clean-room audit findings in [docs/reference-audit.md](docs/reference-audit.md), and local 4 GB VRAM benchmarks in [docs/optimization-report.md](docs/optimization-report.md).
+
+---
+
+## Interactive UI Workspace
+
+**Upload dataset → Data Overview → Automated EDA → Ask AI & Traces → ML Lab → Export Results**
+
+Captured live from the containerized Streamlit UI connected to FastAPI, isolated `sandbox-executor`, and Ollama (`qwen3:4b-instruct`):
+
+| Data Overview & Inferred Types | Automated EDA & Interactive Plotly Charts |
+| :---: | :---: |
+| ![Data Overview](docs/screenshots/01_overview.png) | ![Automated EDA](docs/screenshots/02_automated_eda.png) |
+
+| Ask AI, Python Traces & Verification Checks | Leak-Safe Baseline ML Lab & Exports |
+| :---: | :---: |
+| ![Ask AI & Traces](docs/screenshots/03_ask_ai_traces.png) | ![ML Lab](docs/screenshots/04_ml_lab.png) |
+
+> Full Artifact Export Panel: ![Export Results](docs/screenshots/05_export_results.png)
 
 ---
 
@@ -34,45 +56,47 @@ See full architectural details in [docs/architecture.md](docs/architecture.md), 
    - Hardened tabular ingestion (`csv`, `tsv`, `txt`, `xlsx`, `xlsm`, `xls`, `ods`) with byte-size limit, encoding fallback, CSV delimiter sniffing, Excel formula-injection neutralization, and XML zip-bomb bounds (`loader.py`).
    - Semantic column typing (`numeric_continuous`, `numeric_discrete`, `categorical`, `boolean`, `datetime`, `identifier`, `text`, `empty`), skewness/kurtosis, and data quality alerts (`profiler.py`).
    - Deep statistical diagnostics (`statistics.py`): missingness co-occurrence pairs, Pearson & Spearman correlations, Cramér's V categorical associations, Shapiro-Wilk / D'Agostino normality tests, IQR / Z-score / robust MAD outliers, `IsolationForest` multivariate anomalies, and Kruskal-Wallis group tests.
-   - Interactive Plotly visualizations (`charts.py`): missingness heatmap, numeric distributions, correlation matrix, box/outlier diagnostics, and top categorical breakdowns.
+   - Interactive Plotly visualizations (`charts.py`): missingness heatmap, numeric distributions, correlation matrix, box/outlier diagnostics, top categorical breakdowns, and standalone HTML chart exports.
 
-2. **Agentic EDA Workspace (`agent/`, `llm/`)**
-   - Local-first inference via `UnifiedLLMProvider` supporting **Ollama** (`qwen3:4b-instruct` default), **llama.cpp** OpenAI-compatible server, and optional external **OpenAI-compatible** or **Gemini** endpoints.
-   - Stateful LangGraph orchestration (`EDAAgentGraph`) binding `python_repl`, `get_statistical_summary`, and `run_ml_baseline`, with native tool-calling plus `<tool_call>` XML, bare JSON, ````json`, and ````python` fallback parsing.
-   - Context-window compaction for 4 GB local inference (`num_ctx=4096`) and bounded self-repair retries (`MAX_REPAIR_RETRIES = 2`).
+2. **Deterministic-First Agentic EDA (`agent/`, `llm/`)**
+   - Local-first inference via `UnifiedLLMProvider` supporting **Ollama** (`qwen3:4b-instruct` default, `num_ctx=4096`), **llama.cpp** OpenAI-compatible server, and optional external **OpenAI-compatible** or **Gemini** endpoints, guarded by configurable `LLM_TIMEOUT_SECONDS` (`LLMTimeoutError`).
+   - Stateful LangGraph orchestration (`EDAAgentGraph`) preferring deterministic tools (`get_statistical_summary`, `aggregate_data`, `compute_statistical_test`, `create_standard_chart`, `run_ml_baseline`) and invoking sandboxed `python_repl` only for custom calculations/plots.
+   - Supports native tool-calling plus `<tool_call>` XML, bare JSON, ````json`, and ````python` fallback parsing, context-window compaction (`num_ctx=4096`), bounded self-repair retries (`MAX_REPAIR_RETRIES = 2`), explicit `FIGURES_GENERATED` accounting, and fail-closed error states.
 
 3. **Fail-Closed Python Execution Sandbox (`sandbox/`)**
-   - **Never** falls back to unrestricted execution when an isolation backend is unavailable (`SandboxUnavailableError`).
-   - Static AST gate rejects disallowed imports, dunder traversal, `eval`/`exec`/`getattr`/`open`, and pandas `df.eval()` / `df.query()`.
-   - Pickle-free IPC via PyArrow Parquet (with typed JSON fallback).
-   - **Isolation Boundary Distinction:**
-     - `strict_subprocess` (portable local default): **process-level application restriction**, *not* equivalent to OS container/kernel isolation — combines `python -I`, stripped env, Python socket/DNS kill-switch, prefix-restricted read-only `open()`, and fail-closed OS limits (Windows Kernel Job Objects with explicit assignment verification, or POSIX `rlimit` + process-tree physical RSS watchdog).
-     - `docker` (`Dockerfile.sandbox`, verified E2E): non-privileged per-run Linux container (`--network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=64 --memory=...`).
-     - `nsjail` (`sandbox/nsjail.cfg`): implemented fail-closed adapter for Linux hosts with `nsjail` installed (not verified in CI without an `nsjail` binary).
+   - **Never** falls back or downgrades to unrestricted execution when a configured isolation backend is unavailable (`SandboxUnavailableError`).
+   - Static AST gate rejects disallowed imports, dunder traversal, `eval`/`exec`/`getattr`/`open`, and pandas `df.eval()` / `df.query()`, transferring DataFrames strictly via PyArrow Parquet / typed JSON (never `pickle`).
+   - **Isolation Boundaries:**
+     - `remote` (`RemoteDockerSandbox` → `sandbox/executor_app.py`, Compose default): isolates the Docker daemon behind an internal authenticated service so `spectrumbloom-api` never mounts `/var/run/docker.sock`.
+     - `docker` (`DockerSandbox` + `Dockerfile.sandbox`): non-privileged per-run Linux container (`--network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges:true --user=10001:10001 --pids-limit=64 --cpus=1 --memory=... --tmpfs=/tmp:rw,noexec,nosuid,size=16m`), bytecode-compiled wheels + lazy imports for fast cold startup.
+     - `disabled` (`DisabledSandbox`): disables dynamic `python_repl` in multi-tenant/serverless public deployments (HF Spaces / Cloud Run) while keeping all deterministic EDA, ML Lab, and deterministic copilot tools working.
+     - `strict_subprocess` (local `APP_ENV=development` only — rejected everywhere else): **process-level defense-in-depth**, *not* OS container isolation (`python -I`, stripped env, socket/DNS kill-switch, prefix-locked `open()`, Windows Kernel Job Objects or POSIX `rlimit` + RSS watchdog).
+     - `nsjail` (`sandbox/nsjail.cfg`): optional Linux namespace adapter (implemented fail-closed; not E2E tested without a native `nsjail` binary).
 
 4. **Separate Baseline ML Lab (`ml/experiments.py`)**
-   - Leak-safe `ColumnTransformer` + `Pipeline` with cross-validation (`Dummy`, `LogisticRegression`/`Ridge`, `RandomForest`, `HistGradientBoosting`), held-out test metrics, permutation feature importance, and interactive Plotly diagnostics.
+   - Leak-safe `ColumnTransformer` + `Pipeline` with cross-validation (`Dummy`, `LogisticRegression`/`Ridge`, `RandomForest`, `HistGradientBoosting`), identifier-column leakage dropping, held-out test metrics, permutation feature importance, and interactive Plotly diagnostics.
 
 5. **Evaluation, Observability & Optimization (`services/eval_service.py`, `optimization/`)**
-   - Automated per-turn verification (tool execution success, Plotly JSON validity, tolerance-aware numeric grounding, `<think>` leakage check) + optional `DeepEval` `GEval` groundedness scoring backed by a local Ollama judge (`OllamaDeepEvalJudge`).
+   - Automated per-turn verification (tool execution success, Plotly JSON validity, tolerance-aware numeric grounding, `<think>` leakage & ungrounded chart-reference guards) + optional `DeepEval` `GEval` groundedness scoring backed by a local Ollama judge (`OllamaDeepEvalJudge`).
    - OpenTelemetry trace/metric instrumentation (`core/telemetry.py`, compatible with Jaeger / OTLP) and optional Langfuse callbacks.
 
 ---
 
-## Empirical Local LLM & Quantization Summary (RTX 3050 4 GB)
+## Empirical End-to-End Agent Benchmark (67 Tasks × 6 Datasets, RTX 3050 4 GB)
 
-Measured on an **NVIDIA GeForce RTX 3050 Laptop GPU (4096 MiB)** running Ollama (`num_ctx=4096`, `temperature=0.0`) over [`benchmarks/eda_codegen_tasks.json`](benchmarks/eda_codegen_tasks.json) (`8` EDA tasks on [`examples/sample_ecommerce.csv`](examples/sample_ecommerce.csv)):
+Evaluated across **67 analytical tasks spanning 6 diverse datasets** (`sample_ecommerce.csv`, `palmer_penguins.csv`, `breast_cancer_uci.csv`, `wine_cultivars_uci.csv`, `us_macro_fred.csv`, `mauna_loa_co2.csv`; provenance & SHA-256 checksums in [`benchmarks/datasets/PROVENANCE.md`](benchmarks/datasets/PROVENANCE.md)) over **2 back-to-back repeats** inside `DockerSandbox` (`Ollama`, `num_ctx=4096`):
 
-| Model | Quant | Mode | Ollama VRAM (MB) | AST Pass | Sandbox Pass | Functional Pass | Mean Latency (ms) | Throughput (tok/s) |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `qwen2.5-coder:1.5b-instruct-q2_K` | `Q2_K` | `codegen` | 819.8 | 75.0% | 62.5% | 25.0% | 4068.7 | 100.55 |
-| `qwen2.5-coder:1.5b-instruct-q4_K_M` | `Q4_K_M` | `codegen` | 1115.2 | 100.0% | 87.5% | **87.5%** | 3324.2 | **95.93** |
-| `qwen2.5-coder:1.5b-instruct-q8_0` | `Q8_0` | `codegen` | 1745.1 | 100.0% | 87.5% | 87.5% | 3409.5 | 79.63 |
-| `qwen3:4b-instruct` | `Q4_K_M` | `codegen` | 2236.0 | 87.5% | 87.5% | 75.0% | 8583.1 | 20.88 |
-| `qwen2.5-coder:1.5b-instruct-q4_K_M` | `Q4_K_M` | `tool_calling` | 1115.2 | 25.0% | 25.0% | 0.0% | 3053.6 | 92.82 |
-| `qwen3:4b-instruct` | `Q4_K_M` | `tool_calling` | 2236.0 | 87.5% | 87.5% | **87.5%** | 8271.9 | 19.02 |
+| Model | Run | Correctness | Tool Exec (Std / All) | Retry Rate | Timeouts | P50 (s) | P95 (s) | GPU Offload | Peak VRAM (MB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `qwen2.5-coder:1.5b-instruct-q4_K_M` | 1 | 48/67 (71.6%) | 51.7% / 51.9% | 47.8% | 0 | 4.76 | 22.66 | 100.0% | 1390.0 |
+| `qwen2.5-coder:1.5b-instruct-q4_K_M` | 2 | 47/67 (70.1%) | 51.4% / 51.6% | 47.8% | 0 | 4.96 | 14.28 | 100.0% | 1489.0 |
+| `qwen2.5-coder:3b-instruct-q4_K_M` | 1 | 47/67 (70.1%) | 77.1% / 71.0% | 20.9% | 0 | 4.59 | 14.43 | 100.0% | 2407.0 |
+| `qwen2.5-coder:3b-instruct-q4_K_M` | 2 | 47/67 (70.1%) | 78.3% / 72.0% | 19.4% | 0 | 4.40 | 12.18 | 100.0% | 2407.0 |
+| **`qwen3:4b-instruct` (Default)** | **1** | **61/67 (91.0%)** | **90.8% / 90.8%** | **9.0%** | **0** | **11.72** | **33.91** | 66.3% | 2623.0 |
+| **`qwen3:4b-instruct` (Default)** | **2** | **61/67 (91.0%)** | **90.6% / 90.6%** | **9.0%** | **0** | **17.49** | **40.75** | 66.3% | 2617.0 |
 
-See [docs/optimization-report.md](docs/optimization-report.md) for the breakdown between measured Ollama benchmarks, analytical 4 GB VRAM estimates, dry-run QLoRA feasibility guards (`qlora.py` CUDA training not executed), and execution-verified SFT distillation trajectories (**6/8 verified trajectories** saved to [`benchmarks/distilled_eda_sft.jsonl`](benchmarks/distilled_eda_sft.jsonl)).
+- **`qwen3:4b-instruct` selected as empirical default:** Exceeds the **≥90% correctness target (91.0%, 100% repeat agreement)** and **≤45 s P50 / ≤120 s P95** latency targets despite partial host RAM offloading (`66.3%` GPU, `2236 / 3371 MB`), outperforming 1.5B (`70.1–71.6%`) and 3B (`70.1%`, `0/3` multi-step) across complex schemas, invalid-column handling (`100%`), and statistical tests (`100%`).
+- **Transparent target gap:** Tool execution on `qwen3:4b-instruct` measured **90.6–90.8%** vs the 95% stretch target due to ~6 recoverable first-attempt Pydantic schema retries (`9.0%` retry rate). See [docs/optimization-report.md](docs/optimization-report.md) for per-category tables, the 6 recurring failure cases, the earlier 8-task quantization sweep (`Q2_K`/`Q4_K_M`/`Q8_0`), analytical 4 GB VRAM/QLoRA budgets, and execution-verified SFT trajectories ([`benchmarks/distilled_eda_sft.jsonl`](benchmarks/distilled_eda_sft.jsonl)).
 
 ---
 
@@ -80,14 +104,14 @@ See [docs/optimization-report.md](docs/optimization-report.md) for the breakdown
 
 | Component | Status | Evidence / Scope |
 | --- | --- | --- |
-| FastAPI REST + Deterministic EDA + Leak-Safe ML + Auth Guards | Verified | Unit & integration tests (`tests/`) + hardened production config validator |
-| `SubprocessSandbox` (Windows Job Object & Linux RSS Watchdog) | Verified | Unit tests on Windows + Linux (CI), plus failed Job Object assignment tests |
-| `DockerSandbox` (`Dockerfile.sandbox`) | Verified | Real end-to-end container tests (`tests/integration/test_docker_sandbox.py`) |
-| Full E2E Agent Workflow (LangGraph + Ollama `qwen3:4b-instruct` + Sandbox + Plotly) | Verified | Executed live against Ollama + Uvicorn using [`examples/sample_api_workflow.py`](examples/sample_api_workflow.py) |
-| Quantization Sweep (`Q2_K` / `Q4_K_M` / `Q8_0` / `Qwen3-4B`) | Measured | Empirical Ollama benchmark runs in `benchmarks/results/` |
-| Inference VRAM Budget & QLoRA Memory Table (`vram_budget.py`, `qlora.py`) | Analytical estimate | Calculated from parameter count/quant formulas + `qlora.py --check-only`; CUDA weight updates **not run** |
+| FastAPI REST + Deterministic EDA + Leak-Safe ML + Auth Guards | Verified | Unit & integration tests (`tests/`), strict prod/non-loopback auth guards |
+| Security Isolation Suite (FS, network, fork/spawn, OOM/CPU, missing backend, disabled mode) | Verified | `tests/unit/test_sandbox_security.py`, `tests/unit/test_security_config.py`, `tests/integration/test_docker_sandbox.py` |
+| Isolated Docker Compose Stack (`api` → `sandbox-executor` → `spectrumbloom-sandbox` + `ui`) | Verified E2E | Live `docker compose up --build --wait`, `/api/v1/sessions/*/query` `python_repl` Plotly execution (`7.66 s`), zero `docker.sock` mount on `api`, live UI screenshots |
+| 67-Task Multi-Dataset Agent Evaluation Suite | Measured | 3 models × 2 repeats inside `DockerSandbox` ([`latest_workflow_benchmark.json`](benchmarks/results/latest_workflow_benchmark.json)) |
+| Historical 8-Task Quantization Sweep (`Q2_K` / `Q4_K_M` / `Q8_0` / `Qwen3-4B`) | Measured | Baseline microbenchmark in [`benchmarks/results/latest_benchmark.json`](benchmarks/results/latest_benchmark.json) & `latest_tool_benchmark.json` |
+| Inference VRAM Budget & QLoRA Memory Table (`vram_budget.py`, `qlora.py`) | Analytical estimate | Formula-based VRAM bounds + `qlora.py --check-only`; CUDA weight updates **not run** |
 | SFT Trajectory Distillation (`distillation.py`) | Executed (dataset only) | Generated `6/8` execution-verified JSONL examples; downstream PyTorch QLoRA fine-tuning **not run** |
-| `NsjailSandbox`, `RedisSessionRepository`, `S3DatasetStore`, `llama.cpp`, External OpenAI/Gemini, Live OTLP/Langfuse/DeepEval, Cloud Run, HF Spaces | Implemented, not E2E tested live | Code/adapters/manifests implemented and tested offline or fail-closed where applicable; live external deployments not run |
+| `NsjailSandbox`, `RedisSessionRepository`, `S3DatasetStore`, `llama.cpp`, External OpenAI/Gemini, Live OTLP/Langfuse/DeepEval, Cloud Run, HF Spaces | Implemented, not E2E tested live | Code/adapters/manifests implemented & tested offline or fail-closed (`SANDBOX_BACKEND=disabled` for public demos); live remote deployments not run |
 
 ---
 
@@ -95,6 +119,7 @@ See [docs/optimization-report.md](docs/optimization-report.md) for the breakdown
 
 ### 1. Prerequisites
 - Python **3.12** (supported: `>=3.11,<3.14`) and [`uv`](https://docs.astral.sh/uv/)
+- **Docker** (required for default `SANDBOX_BACKEND=docker` and isolated Compose execution; local `APP_ENV=development` workstations without Docker can explicitly opt into `SANDBOX_BACKEND=strict_subprocess`)
 - Local **Ollama** (`ollama pull qwen3:4b-instruct`) or **llama.cpp** OpenAI-compatible server
 
 ### 2. Install & Configure
@@ -105,6 +130,7 @@ uv venv --python 3.12 .venv
 
 uv pip install -e ".[eval,dev]"
 cp .env.example .env
+docker build -f Dockerfile.sandbox -t spectrumbloom-sandbox:latest .
 ```
 
 ### 3. Start Backend API & Streamlit UI
@@ -160,12 +186,13 @@ python examples/sample_api_workflow.py
 ## Tests, Benchmarks & Quality Checks
 
 ```bash
-ruff check src tests
-ruff format --check src tests
+ruff check src tests benchmarks/prepare_datasets.py
+ruff format --check src tests benchmarks/prepare_datasets.py
 pytest -v
 
-# Re-run quantization & codegen benchmarks
-python -m spectrumbloom.optimization.benchmark --mode codegen --models qwen2.5-coder:1.5b-instruct-q4_K_M qwen3:4b-instruct
+# Re-prepare the 6 evaluation datasets and run the 67-task agent workflow benchmark
+python benchmarks/prepare_datasets.py
+python -m spectrumbloom.optimization.workflow_benchmark --sandbox-backend docker --num-ctx 4096 --repeats 2
 python -m spectrumbloom.optimization.vram_budget
 python -m spectrumbloom.optimization.qlora --check-only --model-id Qwen/Qwen3-4B
 ```
@@ -176,30 +203,31 @@ python -m spectrumbloom.optimization.qlora --check-only --model-id Qwen/Qwen3-4B
 
 ```text
 SpectrumBloom/
-├── .github/workflows/ci.yml        # Ruff + Pytest + Docker build CI
-├── benchmarks/                     # Standardized EDA tasks, JSONL SFT outputs, benchmark JSON/MD results
+├── .github/workflows/ci.yml        # Ruff + Pytest + Docker build CI (API, Sandbox, Executor)
+├── benchmarks/                     # 67-task eval suite, 6-dataset provenance, benchmark JSON/MD results
 ├── deploy/
-│   ├── gcp/                        # Optional Google Cloud Run manifest & guide
-│   └── hf-spaces/                  # Optional single-container HF Spaces demo bundle
-├── docs/                           # Architecture, reference audit, optimization report
+│   ├── gcp/                        # Optional Google Cloud Run manifest & guide (SANDBOX_BACKEND=disabled)
+│   └── hf-spaces/                  # Optional single-container HF Spaces demo (SANDBOX_BACKEND=disabled)
+├── docs/                           # Architecture, reference audit, optimization report & UI screenshots
 ├── examples/                       # Sample e-commerce CSV & REST client workflow script
 ├── src/spectrumbloom/
-│   ├── agent/                      # LangGraph state machine, tool schemas & repair loop
+│   ├── agent/                      # LangGraph state machine, deterministic/sandbox tools & repair loop
 │   ├── api/                        # FastAPI routers & dependency injection
 │   ├── core/                       # Settings, security utilities, OTel + Langfuse setup
 │   ├── domain/                     # Pydantic contracts, interfaces & typed exceptions
 │   ├── eda/                        # Loader, profiler, statistics engine & Plotly charts
 │   ├── llm/                        # Ollama, llama.cpp & optional provider factory + prompts
 │   ├── ml/                         # Separate leak-safe ML baseline pipeline & permutation imp
-│   ├── optimization/               # VRAM estimator, quant benchmarker, distillation & QLoRA guard
+│   ├── optimization/               # VRAM estimator, workflow/quant benchmarkers, distillation & QLoRA guard
 │   ├── repositories/               # Memory/Redis session stores & Local/S3 dataset stores
-│   ├── sandbox/                    # AST validator, isolated runner, JobObject/rlimits, nsjail cfg
+│   ├── sandbox/                    # AST gate, isolated runner, Docker/Remote executor service, JobObj/rlimits
 │   ├── services/                   # SessionService & deterministic + DeepEval evaluators
-│   └── ui/                         # 4-tab Streamlit REST UI client
-├── tests/                          # Unit (sandbox, EDA, ML), integration (FastAPI + OTel) & eval tests
+│   └── ui/                         # 5-tab Streamlit REST UI workspace
+├── tests/                          # Security, sandbox, EDA, ML, API workflow & Docker isolation tests
 ├── Dockerfile                      # Non-root API/UI runtime image
-├── Dockerfile.sandbox              # Air-gapped non-root sandbox image
-├── docker-compose.yml              # Hardened local stack + optional profiles
+├── Dockerfile.executor             # Isolated internal Docker executor service image
+├── Dockerfile.sandbox              # Air-gapped non-root sandbox image (--compile-bytecode)
+├── docker-compose.yml              # Multi-network Compose stack (api -> sandbox-executor -> sandbox)
 ├── LICENSE                         # MIT License
 └── pyproject.toml                  # Hatchling build & optional extras (eval, redis, s3, optimization)
 ```

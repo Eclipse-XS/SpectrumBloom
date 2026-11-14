@@ -12,6 +12,7 @@ from deepeval.models import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
 from spectrumbloom.domain.schemas import ToolTraceItem
+from spectrumbloom.eda.charts import validate_plotly_figure_payload
 
 logger = logging.getLogger(__name__)
 
@@ -59,34 +60,32 @@ def evaluate_turn_deterministically(
     answer: str,
     tool_traces: list[ToolTraceItem],
     figures: list[dict[str, Any]],
+    profile_context: str = "",
+    status: str = "success",
 ) -> dict[str, Any]:
     """Run deterministic automated correctness & faithfulness checks on an agent turn."""
     total_tools = len(tool_traces)
     failed_tools = sum(1 for t in tool_traces if t.error)
     successful_tools = total_tools - failed_tools
 
-    valid_figures = 0
-    for fig in figures:
-        raw_json = fig.get("figure_json")
-        if isinstance(raw_json, str) and raw_json:
-            try:
-                parsed = json.loads(raw_json)
-                if isinstance(parsed, dict) and isinstance(parsed.get("data"), list):
-                    valid_figures += 1
-            except json.JSONDecodeError:
-                continue
+    valid_figures = sum(1 for fig in figures if validate_plotly_figure_payload(fig)[0])
 
     non_empty_answer = bool(answer and answer.strip())
     no_leaked_think = "<think>" not in answer.lower() and "</think>" not in answer.lower()
+    no_fabricated_chart_ref = not (
+        not figures and bool(re.search(r"!\[[^\]]*\]\(|\bfig_\d+\b", answer, re.IGNORECASE))
+    )
 
-    # Check if numeric tokens in the answer appear grounded in tool output when tools ran
+    # Check numeric grounding against successful tool outputs and dataset profile context
     grounded_ratio = 1.0
-    if total_tools > 0 and non_empty_answer:
-        evidence_blob = " ".join(
+    if non_empty_answer and (total_tools > 0 or profile_context.strip()):
+        trace_blob = " ".join(
             f"{t.stdout} {json.dumps(t.result, default=str)}" for t in tool_traces if not t.error
         )
+        evidence_blob = " ".join(part for part in (trace_blob, profile_context, query) if part)
         answer_nums = re.findall(r"\b\d+(?:\.\d+)?\b", answer)
         evidence_nums = [float(x) for x in re.findall(r"\b\d+(?:\.\d+)?\b", evidence_blob)]
+        standard_thresholds = {0.05, 0.01} if total_tools > 0 else set()
         if answer_nums and evidence_blob.strip():
             matched = 0
             for raw_num in answer_nums:
@@ -94,7 +93,9 @@ def evaluate_turn_deterministically(
                     matched += 1
                     continue
                 val = float(raw_num)
-                if any(abs(val - ev) <= max(0.05, 0.015 * abs(ev)) for ev in evidence_nums):
+                if val in standard_thresholds or any(
+                    abs(val - ev) <= max(0.05, 0.015 * abs(ev)) for ev in evidence_nums
+                ):
                     matched += 1
             grounded_ratio = round(matched / len(answer_nums), 3)
 
@@ -102,14 +103,17 @@ def evaluate_turn_deterministically(
     figure_validity_rate = round(valid_figures / len(figures), 3) if figures else 1.0
 
     passed = (
-        non_empty_answer
+        status == "success"
+        and non_empty_answer
         and no_leaked_think
+        and no_fabricated_chart_ref
         and figure_validity_rate == 1.0
         and (total_tools == 0 or successful_tools > 0)
     )
 
     return {
         "passed": passed,
+        "status": status,
         "tool_calls_total": total_tools,
         "tool_calls_succeeded": successful_tools,
         "execution_pass_rate": execution_pass_rate,
@@ -118,6 +122,7 @@ def evaluate_turn_deterministically(
         "figure_validity_rate": figure_validity_rate,
         "numeric_grounding_ratio": grounded_ratio,
         "no_leaked_think_tags": no_leaked_think,
+        "no_fabricated_chart_ref": no_fabricated_chart_ref,
     }
 
 
