@@ -1,0 +1,89 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spectrumbloom-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.example
+    environment:
+      APP_ENV: development
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:4b-instruct}
+      REDIS_URL: ${REDIS_URL:-}
+      LOCAL_DATASET_DIR: /app/data/datasets
+      CORS_ALLOW_ORIGINS: http://localhost:8501,http://127.0.0.1:8501
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - spectrumbloom_datasets:/app/data/datasets
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spectrumbloom-ui
+    ports:
+      - "8501:8501"
+    environment:
+      SPECTRUMBLOOM_API_URL: http://api:8000
+    command:
+      [
+        "streamlit",
+        "run",
+        "src/spectrumbloom/ui/app.py",
+        "--server.address=0.0.0.0",
+        "--server.port=8501",
+        "--server.headless=true"
+      ]
+    depends_on:
+      api:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: spectrumbloom-redis
+    profiles: ["persistence"]
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - spectrumbloom_redis:/data
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: spectrumbloom-ollama
+    profiles: ["local-llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - spectrumbloom_ollama:/root/.ollama
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    container_name: spectrumbloom-jaeger
+    profiles: ["observability"]
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    restart: unless-stopped
+
+volumes:
+  spectrumbloom_datasets:
+  spectrumbloom_redis:
+  spectrumbloom_ollama:

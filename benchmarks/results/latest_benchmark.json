@@ -1,0 +1,484 @@
+{
+  "timestamp": "2026-11-14T16:04:45.448993+00:00",
+  "mode": "codegen",
+  "dataset": "examples\\sample_ecommerce.csv",
+  "dataset_shape": [
+    180,
+    12
+  ],
+  "tasks_count": 8,
+  "results": [
+    {
+      "model": "qwen2.5-coder:1.5b-instruct-q2_K",
+      "think_mode": false,
+      "num_ctx": 4096,
+      "details": {
+        "disk_size_mb": 645.0,
+        "parameter_size": "1.5B",
+        "quantization_level": "Q2_K",
+        "family": "qwen2"
+      },
+      "memory": {
+        "ollama_size_mb": 819.8,
+        "ollama_size_vram_mb": 819.8,
+        "nvidia_smi_baseline_used_mb": 2408.0,
+        "nvidia_smi_loaded_used_mb": 3310.0,
+        "nvidia_smi_delta_mb": 902.0
+      },
+      "summary": {
+        "tasks_total": 8,
+        "ast_pass_rate": 0.75,
+        "sandbox_pass_rate": 0.625,
+        "functional_pass_rate": 0.25,
+        "warmup_ms": 5568.29,
+        "mean_latency_ms": 4068.7,
+        "median_latency_ms": 3227.4,
+        "mean_tokens_per_sec": 100.55
+      },
+      "tasks": [
+        {
+          "task_id": "missing_counts",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": false,
+          "latency_ms": 3223.13,
+          "eval_tokens": 32,
+          "tokens_per_sec": 119.46,
+          "sandbox_peak_mb": 117.95,
+          "error": null
+        },
+        {
+          "task_id": "mean_revenue_by_category",
+          "ast_valid": false,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 3195.4,
+          "eval_tokens": 48,
+          "tokens_per_sec": 84.5,
+          "sandbox_peak_mb": null,
+          "error": "Security check rejected code: Syntax error in generated Python code: expression cannot contain assignment, perhaps you meant \"==\"? (<unknown>, line 2)"
+        },
+        {
+          "task_id": "pearson_corr_price_revenue",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3089.36,
+          "eval_tokens": 40,
+          "tokens_per_sec": 77.91,
+          "sandbox_peak_mb": 149.77,
+          "error": null
+        },
+        {
+          "task_id": "iqr_outlier_count",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": false,
+          "latency_ms": 4033.54,
+          "eval_tokens": 155,
+          "tokens_per_sec": 108.42,
+          "sandbox_peak_mb": 117.91,
+          "error": null
+        },
+        {
+          "task_id": "filtered_electronics_web",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 2892.07,
+          "eval_tokens": 33,
+          "tokens_per_sec": 97.46,
+          "sandbox_peak_mb": 117.78,
+          "error": null
+        },
+        {
+          "task_id": "plotly_category_bar",
+          "ast_valid": true,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 3707.67,
+          "eval_tokens": 119,
+          "tokens_per_sec": 106.3,
+          "sandbox_peak_mb": 118.0,
+          "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\src\\spectrumbloom\\sandbox\\runner.py\", line 362, in main\n    payload = _run(\n              ^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\src\\spectrumbloom\\sandbox\\runner.py\", line 325, in _run\n    exec(compiled, env_vars, env_vars)\n  File \"<spectrumbloom_sandbox>\", line 2, in <module>\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\src\\spectrumbloom\\sandbox\\runner.py\", line 238, in _safe_import\n    return real_import(name, globals_dict, locals_dict, fromlist, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nModuleNotFoundError: No module named 'plotly.figure'\n"
+        },
+        {
+          "task_id": "plotly_revenue_histogram",
+          "ast_valid": false,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 9176.84,
+          "eval_tokens": 768,
+          "tokens_per_sec": 115.84,
+          "sandbox_peak_mb": null,
+          "error": "Security check rejected code: Syntax error in generated Python code: '(' was never closed (<unknown>, line 2)"
+        },
+        {
+          "task_id": "kruskal_region_revenue",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": false,
+          "latency_ms": 3231.7,
+          "eval_tokens": 66,
+          "tokens_per_sec": 94.51,
+          "sandbox_peak_mb": 118.21,
+          "error": null
+        }
+      ]
+    },
+    {
+      "model": "qwen2.5-coder:1.5b-instruct-q4_K_M",
+      "think_mode": false,
+      "num_ctx": 4096,
+      "details": {
+        "disk_size_mb": 940.4,
+        "parameter_size": "1.5B",
+        "quantization_level": "Q4_K_M",
+        "family": "qwen2"
+      },
+      "memory": {
+        "ollama_size_mb": 1115.2,
+        "ollama_size_vram_mb": 1115.2,
+        "nvidia_smi_baseline_used_mb": 3316.0,
+        "nvidia_smi_loaded_used_mb": 1276.0,
+        "nvidia_smi_delta_mb": -2040.0
+      },
+      "summary": {
+        "tasks_total": 8,
+        "ast_pass_rate": 1.0,
+        "sandbox_pass_rate": 0.875,
+        "functional_pass_rate": 0.875,
+        "warmup_ms": 12368.0,
+        "mean_latency_ms": 3324.2,
+        "median_latency_ms": 3224.0,
+        "mean_tokens_per_sec": 95.93
+      },
+      "tasks": [
+        {
+          "task_id": "missing_counts",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3409.86,
+          "eval_tokens": 45,
+          "tokens_per_sec": 119.42,
+          "sandbox_peak_mb": 118.16,
+          "error": null
+        },
+        {
+          "task_id": "mean_revenue_by_category",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3081.78,
+          "eval_tokens": 43,
+          "tokens_per_sec": 79.23,
+          "sandbox_peak_mb": 118.11,
+          "error": null
+        },
+        {
+          "task_id": "pearson_corr_price_revenue",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3070.91,
+          "eval_tokens": 32,
+          "tokens_per_sec": 72.36,
+          "sandbox_peak_mb": 150.16,
+          "error": null
+        },
+        {
+          "task_id": "iqr_outlier_count",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3914.09,
+          "eval_tokens": 155,
+          "tokens_per_sec": 111.27,
+          "sandbox_peak_mb": 118.29,
+          "error": null
+        },
+        {
+          "task_id": "filtered_electronics_web",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3036.73,
+          "eval_tokens": 33,
+          "tokens_per_sec": 80.65,
+          "sandbox_peak_mb": 117.91,
+          "error": null
+        },
+        {
+          "task_id": "plotly_category_bar",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3632.44,
+          "eval_tokens": 105,
+          "tokens_per_sec": 98.66,
+          "sandbox_peak_mb": 141.13,
+          "error": null
+        },
+        {
+          "task_id": "plotly_revenue_histogram",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3177.67,
+          "eval_tokens": 53,
+          "tokens_per_sec": 94.2,
+          "sandbox_peak_mb": 140.79,
+          "error": null
+        },
+        {
+          "task_id": "kruskal_region_revenue",
+          "ast_valid": true,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 3270.25,
+          "eval_tokens": 77,
+          "tokens_per_sec": 111.68,
+          "sandbox_peak_mb": 119.09,
+          "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\numpy\\_core\\fromnumeric.py\", line 54, in _wrapfunc\n    return bound(*args, **kwds)\n           ^^^^^^^^^^^^^^^^^^^^\nTypeError: '<' not supported between instances of 'str' and 'float'\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\src\\spectrumbloom\\sandbox\\runner.py\", line 362, in main\n    payload = _run(\n              ^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\src\\spectrumbloom\\sandbox\\runner.py\", line 325, in _run\n    exec(compiled, env_vars, env_vars)\n  File \"<spectrumbloom_sandbox>\", line 6, in <module>\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\scipy\\stats\\_axis_nan_policy.py\", line 601, in axis_nan_policy_wrapper\n    res = hypotest_fun_out(*samples, **kwds)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\scipy\\stats\\_stats_py.py\", line 8661, in kruskal\n    ranked, _, t = _rankdata(alldata, method='average', return_ties=True)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\scipy\\stats\\_stats_py.py\", line 10397, in _rankdata\n    j = xp.argsort(x, axis=-1, stable=True)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\scipy\\_external\\array_api_compat\\_internal.py\", line 35, in wrapped_f\n    return f(*args, xp=xp, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\scipy\\_external\\array_api_compat\\common\\_aliases.py\", line 484, in argsort\n    res = xp.argsort(x, axis=axis, **kwargs)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\numpy\\_core\\fromnumeric.py\", line 1246, in argsort\n    return _wrapfunc(\n           ^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\numpy\\_core\\fromnumeric.py\", line 63, in _wrapfunc\n    return _wrapit(obj, method, *args, **kwds)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\numpy\\_core\\fromnumeric.py\", line 43, in _wrapit\n    result = getattr(arr, method)(*args, **kwds)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: '<' not supported between instances of 'str' and 'float'\n"
+        }
+      ]
+    },
+    {
+      "model": "qwen2.5-coder:1.5b-instruct-q8_0",
+      "think_mode": false,
+      "num_ctx": 4096,
+      "details": {
+        "disk_size_mb": 1570.3,
+        "parameter_size": "1.5B",
+        "quantization_level": "Q8_0",
+        "family": "qwen2"
+      },
+      "memory": {
+        "ollama_size_mb": 1745.1,
+        "ollama_size_vram_mb": 1745.1,
+        "nvidia_smi_baseline_used_mb": 1282.0,
+        "nvidia_smi_loaded_used_mb": 3110.0,
+        "nvidia_smi_delta_mb": 1828.0
+      },
+      "summary": {
+        "tasks_total": 8,
+        "ast_pass_rate": 1.0,
+        "sandbox_pass_rate": 0.875,
+        "functional_pass_rate": 0.875,
+        "warmup_ms": 5971.3,
+        "mean_latency_ms": 3409.5,
+        "median_latency_ms": 3297.2,
+        "mean_tokens_per_sec": 79.63
+      },
+      "tasks": [
+        {
+          "task_id": "missing_counts",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3312.23,
+          "eval_tokens": 26,
+          "tokens_per_sec": 87.31,
+          "sandbox_peak_mb": 118.36,
+          "error": null
+        },
+        {
+          "task_id": "mean_revenue_by_category",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3047.86,
+          "eval_tokens": 38,
+          "tokens_per_sec": 85.89,
+          "sandbox_peak_mb": 118.2,
+          "error": null
+        },
+        {
+          "task_id": "pearson_corr_price_revenue",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3014.35,
+          "eval_tokens": 32,
+          "tokens_per_sec": 85.41,
+          "sandbox_peak_mb": 150.09,
+          "error": null
+        },
+        {
+          "task_id": "iqr_outlier_count",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 4193.07,
+          "eval_tokens": 126,
+          "tokens_per_sec": 77.66,
+          "sandbox_peak_mb": 117.79,
+          "error": null
+        },
+        {
+          "task_id": "filtered_electronics_web",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3147.86,
+          "eval_tokens": 33,
+          "tokens_per_sec": 60.29,
+          "sandbox_peak_mb": 118.05,
+          "error": null
+        },
+        {
+          "task_id": "plotly_category_bar",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3948.99,
+          "eval_tokens": 115,
+          "tokens_per_sec": 85.75,
+          "sandbox_peak_mb": 141.31,
+          "error": null
+        },
+        {
+          "task_id": "plotly_revenue_histogram",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 3282.19,
+          "eval_tokens": 51,
+          "tokens_per_sec": 81.46,
+          "sandbox_peak_mb": 141.18,
+          "error": null
+        },
+        {
+          "task_id": "kruskal_region_revenue",
+          "ast_valid": true,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 3329.31,
+          "eval_tokens": 44,
+          "tokens_per_sec": 73.26,
+          "sandbox_peak_mb": 118.66,
+          "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\numpy\\_core\\fromnumeric.py\", line 54, in _wrapfunc\n    return bound(*args, **kwds)\n           ^^^^^^^^^^^^^^^^^^^^\nTypeError: '<' not supported between instances of 'str' and 'float'\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\src\\spectrumbloom\\sandbox\\runner.py\", line 362, in main\n    payload = _run(\n              ^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\src\\spectrumbloom\\sandbox\\runner.py\", line 325, in _run\n    exec(compiled, env_vars, env_vars)\n  File \"<spectrumbloom_sandbox>\", line 6, in <module>\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\scipy\\stats\\_axis_nan_policy.py\", line 601, in axis_nan_policy_wrapper\n    res = hypotest_fun_out(*samples, **kwds)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\scipy\\stats\\_stats_py.py\", line 8661, in kruskal\n    ranked, _, t = _rankdata(alldata, method='average', return_ties=True)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\scipy\\stats\\_stats_py.py\", line 10397, in _rankdata\n    j = xp.argsort(x, axis=-1, stable=True)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\scipy\\_external\\array_api_compat\\_internal.py\", line 35, in wrapped_f\n    return f(*args, xp=xp, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\scipy\\_external\\array_api_compat\\common\\_aliases.py\", line 484, in argsort\n    res = xp.argsort(x, axis=axis, **kwargs)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\numpy\\_core\\fromnumeric.py\", line 1246, in argsort\n    return _wrapfunc(\n           ^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\numpy\\_core\\fromnumeric.py\", line 63, in _wrapfunc\n    return _wrapit(obj, method, *args, **kwds)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Eclipse\\SpectrumBloom\\.venv\\Lib\\site-packages\\numpy\\_core\\fromnumeric.py\", line 43, in _wrapit\n    result = getattr(arr, method)(*args, **kwds)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: '<' not supported between instances of 'str' and 'float'\n"
+        }
+      ]
+    },
+    {
+      "model": "qwen3:4b-instruct",
+      "think_mode": false,
+      "num_ctx": 4096,
+      "details": {
+        "disk_size_mb": 2381.6,
+        "parameter_size": "4.0B",
+        "quantization_level": "Q4_K_M",
+        "family": "qwen3"
+      },
+      "memory": {
+        "ollama_size_mb": 3371.2,
+        "ollama_size_vram_mb": 2236.0,
+        "nvidia_smi_baseline_used_mb": 3114.0,
+        "nvidia_smi_loaded_used_mb": 2392.0,
+        "nvidia_smi_delta_mb": -722.0
+      },
+      "summary": {
+        "tasks_total": 8,
+        "ast_pass_rate": 0.875,
+        "sandbox_pass_rate": 0.875,
+        "functional_pass_rate": 0.75,
+        "warmup_ms": 12423.15,
+        "mean_latency_ms": 8583.1,
+        "median_latency_ms": 8042.4,
+        "mean_tokens_per_sec": 20.88
+      },
+      "tasks": [
+        {
+          "task_id": "missing_counts",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 4903.74,
+          "eval_tokens": 27,
+          "tokens_per_sec": 22.21,
+          "sandbox_peak_mb": 118.11,
+          "error": null
+        },
+        {
+          "task_id": "mean_revenue_by_category",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 11142.28,
+          "eval_tokens": 169,
+          "tokens_per_sec": 20.1,
+          "sandbox_peak_mb": 117.79,
+          "error": null
+        },
+        {
+          "task_id": "pearson_corr_price_revenue",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 4230.97,
+          "eval_tokens": 26,
+          "tokens_per_sec": 22.61,
+          "sandbox_peak_mb": 149.8,
+          "error": null
+        },
+        {
+          "task_id": "iqr_outlier_count",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 12611.91,
+          "eval_tokens": 194,
+          "tokens_per_sec": 19.76,
+          "sandbox_peak_mb": 117.75,
+          "error": null
+        },
+        {
+          "task_id": "filtered_electronics_web",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": false,
+          "latency_ms": 4008.58,
+          "eval_tokens": 29,
+          "tokens_per_sec": 22.2,
+          "sandbox_peak_mb": 118.36,
+          "error": null
+        },
+        {
+          "task_id": "plotly_category_bar",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 9535.07,
+          "eval_tokens": 137,
+          "tokens_per_sec": 20.12,
+          "sandbox_peak_mb": 140.94,
+          "error": null
+        },
+        {
+          "task_id": "plotly_revenue_histogram",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 6549.71,
+          "eval_tokens": 71,
+          "tokens_per_sec": 20.33,
+          "sandbox_peak_mb": 140.95,
+          "error": null
+        },
+        {
+          "task_id": "kruskal_region_revenue",
+          "ast_valid": false,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 15682.64,
+          "eval_tokens": 254,
+          "tokens_per_sec": 19.67,
+          "sandbox_peak_mb": null,
+          "error": "Security check rejected code: Import 'stats' is not permitted in sandbox."
+        }
+      ]
+    }
+  ]
+}

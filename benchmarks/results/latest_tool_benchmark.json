@@ -1,0 +1,248 @@
+{
+  "timestamp": "2026-11-14T16:07:21.096576+00:00",
+  "mode": "tool_calling",
+  "dataset": "examples\\sample_ecommerce.csv",
+  "dataset_shape": [
+    180,
+    12
+  ],
+  "tasks_count": 8,
+  "results": [
+    {
+      "model": "qwen2.5-coder:1.5b-instruct-q4_K_M",
+      "think_mode": false,
+      "num_ctx": 4096,
+      "details": {
+        "disk_size_mb": 940.4,
+        "parameter_size": "1.5B",
+        "quantization_level": "Q4_K_M",
+        "family": "qwen2"
+      },
+      "memory": {
+        "ollama_size_mb": 1115.2,
+        "ollama_size_vram_mb": 1115.2,
+        "nvidia_smi_baseline_used_mb": 2398.0,
+        "nvidia_smi_loaded_used_mb": 1276.0,
+        "nvidia_smi_delta_mb": -1122.0
+      },
+      "summary": {
+        "tasks_total": 8,
+        "ast_pass_rate": 0.25,
+        "sandbox_pass_rate": 0.25,
+        "functional_pass_rate": 0.0,
+        "warmup_ms": 7382.81,
+        "mean_latency_ms": 3053.6,
+        "median_latency_ms": 3035.8,
+        "mean_tokens_per_sec": 92.82
+      },
+      "tasks": [
+        {
+          "task_id": "missing_counts",
+          "ast_valid": false,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 3270.41,
+          "eval_tokens": 30,
+          "tokens_per_sec": 118.9,
+          "sandbox_peak_mb": null,
+          "error": "Security check rejected code: Syntax error in generated Python code: invalid syntax (<unknown>, line 1)"
+        },
+        {
+          "task_id": "mean_revenue_by_category",
+          "ast_valid": false,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 3140.45,
+          "eval_tokens": 60,
+          "tokens_per_sec": 97.14,
+          "sandbox_peak_mb": null,
+          "error": "Security check rejected code: Syntax error in generated Python code: invalid syntax (<unknown>, line 1)"
+        },
+        {
+          "task_id": "pearson_corr_price_revenue",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": false,
+          "latency_ms": 2810.66,
+          "eval_tokens": 26,
+          "tokens_per_sec": 70.28,
+          "sandbox_peak_mb": 117.62,
+          "error": null
+        },
+        {
+          "task_id": "iqr_outlier_count",
+          "ast_valid": false,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 3117.72,
+          "eval_tokens": 48,
+          "tokens_per_sec": 83.92,
+          "sandbox_peak_mb": null,
+          "error": "Security check rejected code: Syntax error in generated Python code: invalid syntax (<unknown>, line 1)"
+        },
+        {
+          "task_id": "filtered_electronics_web",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": false,
+          "latency_ms": 2896.25,
+          "eval_tokens": 37,
+          "tokens_per_sec": 89.28,
+          "sandbox_peak_mb": 117.51,
+          "error": null
+        },
+        {
+          "task_id": "plotly_category_bar",
+          "ast_valid": false,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 3291.66,
+          "eval_tokens": 71,
+          "tokens_per_sec": 103.87,
+          "sandbox_peak_mb": null,
+          "error": "Security check rejected code: Syntax error in generated Python code: invalid syntax (<unknown>, line 1)"
+        },
+        {
+          "task_id": "plotly_revenue_histogram",
+          "ast_valid": false,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 2953.78,
+          "eval_tokens": 46,
+          "tokens_per_sec": 95.0,
+          "sandbox_peak_mb": null,
+          "error": "Security check rejected code: Syntax error in generated Python code: invalid syntax (<unknown>, line 1)"
+        },
+        {
+          "task_id": "kruskal_region_revenue",
+          "ast_valid": false,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 2947.74,
+          "eval_tokens": 41,
+          "tokens_per_sec": 84.15,
+          "sandbox_peak_mb": null,
+          "error": "Security check rejected code: Syntax error in generated Python code: invalid syntax (<unknown>, line 1)"
+        }
+      ]
+    },
+    {
+      "model": "qwen3:4b-instruct",
+      "think_mode": false,
+      "num_ctx": 4096,
+      "details": {
+        "disk_size_mb": 2381.6,
+        "parameter_size": "4.0B",
+        "quantization_level": "Q4_K_M",
+        "family": "qwen3"
+      },
+      "memory": {
+        "ollama_size_mb": 3371.2,
+        "ollama_size_vram_mb": 2236.0,
+        "nvidia_smi_baseline_used_mb": 1282.0,
+        "nvidia_smi_loaded_used_mb": 2392.0,
+        "nvidia_smi_delta_mb": 1110.0
+      },
+      "summary": {
+        "tasks_total": 8,
+        "ast_pass_rate": 0.875,
+        "sandbox_pass_rate": 0.875,
+        "functional_pass_rate": 0.875,
+        "warmup_ms": 12242.46,
+        "mean_latency_ms": 8271.9,
+        "median_latency_ms": 6197.2,
+        "mean_tokens_per_sec": 19.02
+      },
+      "tasks": [
+        {
+          "task_id": "missing_counts",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 5740.27,
+          "eval_tokens": 45,
+          "tokens_per_sec": 22.11,
+          "sandbox_peak_mb": 117.71,
+          "error": null
+        },
+        {
+          "task_id": "mean_revenue_by_category",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 4614.08,
+          "eval_tokens": 40,
+          "tokens_per_sec": 21.31,
+          "sandbox_peak_mb": 118.21,
+          "error": null
+        },
+        {
+          "task_id": "pearson_corr_price_revenue",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 5250.31,
+          "eval_tokens": 46,
+          "tokens_per_sec": 20.25,
+          "sandbox_peak_mb": 117.81,
+          "error": null
+        },
+        {
+          "task_id": "iqr_outlier_count",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 15216.84,
+          "eval_tokens": 205,
+          "tokens_per_sec": 16.55,
+          "sandbox_peak_mb": 118.13,
+          "error": null
+        },
+        {
+          "task_id": "filtered_electronics_web",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 5634.11,
+          "eval_tokens": 49,
+          "tokens_per_sec": 17.34,
+          "sandbox_peak_mb": 117.56,
+          "error": null
+        },
+        {
+          "task_id": "plotly_category_bar",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 11664.17,
+          "eval_tokens": 155,
+          "tokens_per_sec": 17.53,
+          "sandbox_peak_mb": 140.51,
+          "error": null
+        },
+        {
+          "task_id": "plotly_revenue_histogram",
+          "ast_valid": true,
+          "sandbox_ok": true,
+          "functional_pass": true,
+          "latency_ms": 6654.15,
+          "eval_tokens": 64,
+          "tokens_per_sec": 19.13,
+          "sandbox_peak_mb": 140.96,
+          "error": null
+        },
+        {
+          "task_id": "kruskal_region_revenue",
+          "ast_valid": false,
+          "sandbox_ok": false,
+          "functional_pass": false,
+          "latency_ms": 11401.08,
+          "eval_tokens": 154,
+          "tokens_per_sec": 17.97,
+          "sandbox_peak_mb": null,
+          "error": "Security check rejected code: Import 'stats' is not permitted in sandbox."
+        }
+      ]
+    }
+  ]
+}

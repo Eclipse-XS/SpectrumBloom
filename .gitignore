@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Local runtime artifacts & uploads
+data/
+artifacts/
+uploads/
+mlruns/
+.deepeval/
+*.sqlite
+*.db
+
+# Testing & linters
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# IDEs & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,45 @@
+# Optional Google Cloud Run Deployment (Scale-to-Zero, No Mandatory Paid Services)
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: spectrumbloom-api
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "2"
+    spec:
+      containerConcurrency: 10
+      timeoutSeconds: 300
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/spectrumbloom/api:latest
+          ports:
+            - containerPort: 8000
+          resources:
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          env:
+            - name: APP_ENV
+              value: production
+            - name: DATASET_STORAGE_BACKEND
+              value: local
+            - name: LOCAL_DATASET_DIR
+              value: /tmp/spectrumbloom/datasets
+            - name: SANDBOX_BACKEND
+              value: strict_subprocess
+            - name: LLM_PROVIDER
+              value: openai
+            - name: OPENAI_BASE_URL
+              value: https://router.huggingface.co/v1
+            - name: LLM_MODEL
+              value: Qwen/Qwen2.5-Coder-7B-Instruct
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30

@@ -1,0 +1,107 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spectrumbloom"
+version = "0.1.0"
+description = "SpectrumBloom: Production-oriented, local-first agentic Exploratory Data Analysis (EDA) platform."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11,<3.14"
+authors = [
+  { name = "SpectrumBloom Contributors" },
+]
+keywords = ["eda", "langgraph", "fastapi", "ollama", "qwen", "plotly", "sandbox", "mlops"]
+dependencies = [
+  "fastapi>=0.115.0,<1.0",
+  "uvicorn[standard]>=0.32.0,<1.0",
+  "pydantic>=2.9.0,<3.0",
+  "pydantic-settings>=2.6.0,<3.0",
+  "python-multipart>=0.0.12",
+  "httpx>=0.27.0,<1.0",
+  "pandas>=2.2.0,<3.0",
+  "numpy>=1.26.0,<3.0",
+  "scipy>=1.13.0,<2.0",
+  "scikit-learn>=1.5.0,<2.0",
+  "statsmodels>=0.14.0,<1.0",
+  "plotly>=5.24.0,<7.0",
+  "openpyxl>=3.1.5",
+  "xlrd>=2.0.1",
+  "odfpy>=1.4.1",
+  "defusedxml>=0.7.1",
+  "langgraph>=0.3.0,<2.0",
+  "langchain-core>=0.3.0,<2.0",
+  "langchain-ollama>=0.2.0,<2.0",
+  "langchain-openai>=0.2.0,<2.0",
+  "streamlit>=1.39.0,<2.0",
+  "opentelemetry-api>=1.28.0,<2.0",
+  "opentelemetry-sdk>=1.28.0,<2.0",
+  "opentelemetry-instrumentation-fastapi>=0.49b0",
+  "opentelemetry-exporter-otlp-proto-http>=1.28.0,<2.0",
+]
+
+[project.optional-dependencies]
+eval = [
+  "deepeval>=1.4.0",
+  "langfuse>=2.50.0",
+]
+redis = [
+  "redis>=5.2.0,<7.0",
+  "langgraph-checkpoint-redis>=0.1.0,<1.0",
+]
+gemini = [
+  "langchain-google-genai>=2.0.0",
+]
+s3 = [
+  "boto3>=1.35.0",
+]
+llamacpp = [
+  "llama-cpp-python>=0.3.0",
+]
+optimization = [
+  "torch>=2.4.0",
+  "transformers>=4.46.0",
+  "peft>=0.13.0",
+  "bitsandbytes>=0.44.0",
+  "trl>=0.12.0",
+  "datasets>=3.0.0",
+  "accelerate>=1.0.0",
+]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.7.0",
+  "mypy>=1.13.0",
+]
+
+[project.scripts]
+spectrumbloom-api = "spectrumbloom.main:run_server"
+spectrumbloom-benchmark = "spectrumbloom.optimization.benchmark:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spectrumbloom"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S101", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108", "S603"]
+"src/spectrumbloom/sandbox/**" = ["S102", "S603"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

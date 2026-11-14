@@ -1,0 +1,74 @@
+[
+  {
+    "id": "missing_counts",
+    "category": "profiling",
+    "requires_figure": false,
+    "prompt": "Compute the missing value count per column as a Python dict (only columns with missing > 0) and assign it to `result`.",
+    "assertion": {
+      "type": "dict_keys_match_missing"
+    }
+  },
+  {
+    "id": "mean_revenue_by_category",
+    "category": "aggregation",
+    "requires_figure": false,
+    "prompt": "Compute the mean `revenue` grouped by `category`, sorted descending, and store a dict mapping category to rounded float mean (2 decimals) in `result`.",
+    "assertion": {
+      "type": "category_mean_revenue"
+    }
+  },
+  {
+    "id": "pearson_corr_price_revenue",
+    "category": "statistics",
+    "requires_figure": false,
+    "prompt": "Compute the Pearson correlation coefficient between `unit_price` and `revenue` and assign the float to `result`.",
+    "assertion": {
+      "type": "pearson_unit_price_revenue"
+    }
+  },
+  {
+    "id": "iqr_outlier_count",
+    "category": "outliers",
+    "requires_figure": false,
+    "prompt": "Using the 1.5 * IQR rule on `revenue`, count how many outlier rows exist and assign the integer count to `result`.",
+    "assertion": {
+      "type": "iqr_revenue_outliers"
+    }
+  },
+  {
+    "id": "filtered_electronics_web",
+    "category": "filtering",
+    "requires_figure": false,
+    "prompt": "Filter rows where `category == 'Electronics'` and `channel == 'Web'` using standard boolean indexing (do NOT use df.query or df.eval), then assign the row count integer to `result`.",
+    "assertion": {
+      "type": "electronics_web_count"
+    }
+  },
+  {
+    "id": "plotly_category_bar",
+    "category": "visualization",
+    "requires_figure": true,
+    "prompt": "Create a Plotly bar chart showing total `revenue` per `category` and append the figure to `plotly_figures`. Also assign total overall revenue float to `result`.",
+    "assertion": {
+      "type": "total_revenue_with_figure"
+    }
+  },
+  {
+    "id": "plotly_revenue_histogram",
+    "category": "visualization",
+    "requires_figure": true,
+    "prompt": "Create a Plotly histogram of `revenue` with title 'Revenue Distribution' and append it to `plotly_figures`.",
+    "assertion": {
+      "type": "figure_only"
+    }
+  },
+  {
+    "id": "kruskal_region_revenue",
+    "category": "hypothesis_test",
+    "requires_figure": false,
+    "prompt": "Run a Kruskal-Wallis test comparing `revenue` across `region` groups using `stats.kruskal` and assign a dict `{'statistic': float, 'p_value': float}` to `result`.",
+    "assertion": {
+      "type": "kruskal_region_revenue"
+    }
+  }
+]
