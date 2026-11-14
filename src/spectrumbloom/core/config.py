@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     app_name: str = "SpectrumBloom"
     app_env: Literal["development", "staging", "production", "test"] = "development"
     log_level: str = "INFO"
-    api_host: str = "0.0.0.0"  # noqa: S104
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     cors_allow_origins: str = "http://localhost:8501,http://127.0.0.1:8501"
     api_auth_token: str = ""
@@ -60,7 +60,7 @@ class Settings(BaseSettings):
 
     # Fail-closed sandbox configuration
     sandbox_backend: Literal["strict_subprocess", "docker", "nsjail"] = "strict_subprocess"
-    sandbox_timeout_seconds: int = Field(default=15, ge=1, le=120)
+    sandbox_timeout_seconds: int = Field(default=25, ge=1, le=120)
     sandbox_memory_limit_mb: int = Field(default=512, ge=128, le=4096)
     sandbox_max_output_chars: int = Field(default=20000, ge=1000, le=200000)
     sandbox_docker_image: str = "spectrumbloom-sandbox:latest"
@@ -82,6 +82,46 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
+
+    @model_validator(mode="after")
+    def _validate_security_configuration(self) -> Settings:
+        token = (self.api_auth_token or "").strip()
+        if self.app_env in {"production", "staging"}:
+            weak_tokens = {
+                "changeme",
+                "change-me",
+                "replace-me",
+                "replace_me",
+                "secret",
+                "token",
+                "password",
+                "admin",
+            }
+            if not token or token.lower() in weak_tokens:
+                raise ValueError(
+                    "API_AUTH_TOKEN must be configured with a strong secret when "
+                    "APP_ENV is production or staging."
+                )
+            if len(token) < 16:
+                raise ValueError(
+                    "API_AUTH_TOKEN must be at least 16 characters when "
+                    "APP_ENV is production or staging."
+                )
+            if "*" in self.cors_origins_list:
+                raise ValueError(
+                    "CORS_ALLOW_ORIGINS cannot include wildcard '*' when "
+                    "APP_ENV is production or staging."
+                )
+        elif (
+            self.app_env == "development"
+            and self.api_host.strip() not in {"127.0.0.1", "localhost", "::1"}
+            and not token
+        ):
+            raise ValueError(
+                "Refusing to bind non-loopback API_HOST without API_AUTH_TOKEN in "
+                "development mode. Set API_AUTH_TOKEN or bind API_HOST=127.0.0.1."
+            )
+        return self
 
 
 @lru_cache(maxsize=1)

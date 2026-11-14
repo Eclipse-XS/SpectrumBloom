@@ -52,12 +52,16 @@ SpectrumBloom is a modular monolith engineered for **local-first, secure, observ
 5. Every turn is scored by `eval_service.evaluate_turn_deterministically` and traced via OpenTelemetry spans/metrics (plus optional Langfuse callbacks).
 
 ### 3. Fail-Closed Code Sandbox (`sandbox/`)
+- **Isolation Tiers (Explicit Boundary Distinction):**
+  - `strict_subprocess` provides **application-level process defense-in-depth** (not OS kernel/container isolation). It reduces risk when Docker/nsjail are unavailable on a local developer workstation, but does **not** replace container namespaces, seccomp, or filesystem mounts.
+  - `docker` (`DockerSandbox` + `Dockerfile.sandbox`) provides **non-privileged container isolation per execution**: `--network=none`, `--read-only`, `--cap-drop=ALL`, `--security-opt=no-new-privileges:true`, `--pids-limit=64`, `--cpus=1`, hard cgroup `--memory`/`--memory-swap`, and ephemeral `/tmp` tmpfs.
+  - `nsjail` (`NsjailSandbox` + `sandbox/nsjail.cfg`) provides optional Linux namespace/rlimit confinement where installed (implemented fail-closed; untested without a native Linux `nsjail` binary).
+  - Neither backend falls back to unrestricted host execution (`SandboxUnavailableError`).
 - **Static AST Gate:** Blocks disallowed imports, dunder attributes, reflection builtins (`getattr`, `eval`, `exec`, `open`), file I/O (`read_*`, `to_csv`, `to_pickle`), and pandas expression evaluation (`df.eval`, `df.query`).
-- **Pickle-Free IPC:** DataFrames cross the process boundary via PyArrow Parquet (with safe typed JSON fallback), never `pickle`.
-- **Runtime Isolation:**
+- **Pickle-Free IPC:** DataFrames cross the execution boundary via PyArrow Parquet (with safe typed JSON fallback), never `pickle`.
+- **Runtime Hardening Inside Runner:**
   - `python -I` isolated mode with stripped environment variables (`OPENBLAS_NUM_THREADS=1`).
   - Socket class & DNS resolution replaced with `PermissionError` kill-switches.
   - Filesystem `open()` restricted strictly to read-only access under `sys.prefix` / `sys.base_prefix`.
-  - **Windows:** Kernel Job Objects (`JOB_OBJECT_LIMIT_JOB_MEMORY | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS`) enforce memory and process-tree termination.
-  - **POSIX / Linux:** `RLIMIT_CPU`, `RLIMIT_FSIZE`, `RLIMIT_AS`, process-group `SIGKILL`, and `/proc/<pid>/statm` RSS watchdog.
-  - **Optional Container/nsjail Mode:** Uses non-privileged `--network=none --read-only --cap-drop=ALL` execution and **never falls back** if a requested backend fails.
+  - **Windows (`strict_subprocess`):** Kernel Job Objects (`JOB_OBJECT_LIMIT_JOB_MEMORY | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS`) enforce memory and process-tree termination; process creation and `AssignProcessToJobObject` failures fail closed (`SandboxUnavailableError`).
+  - **POSIX / Linux (`strict_subprocess`):** `RLIMIT_CPU`, `RLIMIT_FSIZE`, high virtual-arena safety cap `RLIMIT_AS` (allowing OpenBLAS/PyArrow/Plotly shared mappings without virtual-address starvation), process-group `SIGKILL`, and `/proc/<pid>/statm` + child-tree physical RSS watchdog.

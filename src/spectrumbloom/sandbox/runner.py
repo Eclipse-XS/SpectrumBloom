@@ -15,6 +15,7 @@ import io
 import json
 import math
 import os
+import signal
 import sys
 import traceback
 from contextlib import redirect_stdout
@@ -199,13 +200,23 @@ def _apply_posix_limits(timeout_seconds: int, memory_limit_mb: int) -> None:
     except ImportError:
         return
 
+    sigxcpu = getattr(signal, "SIGXCPU", None)
+    if sigxcpu is not None:
+
+        def _on_sigxcpu(_signum: int, _frame: Any) -> None:
+            os._exit(152)
+
+        signal.signal(sigxcpu, _on_sigxcpu)
+
     cpu_soft = max(1, timeout_seconds)
     cpu_hard = cpu_soft + 1
     file_bytes = 2 * 1024 * 1024  # small temp scratch cap
 
-    # Virtual address space must accommodate OpenBLAS/PyArrow shared mappings;
-    # exact RSS is enforced by the parent watchdog.
-    virtual_bytes = max(1024, memory_limit_mb * 2) * 1024 * 1024
+    # Virtual address space must accommodate OpenBLAS/PyArrow/Plotly shared
+    # mappings (~1+ GiB VmSize even at ~230 MB RSS). Keep a high virtual guard
+    # to stop multi-GB mmap bombs while the parent POSIX RSS watchdog enforces
+    # physical memory_limit_mb.
+    virtual_bytes = max(4096, memory_limit_mb * 8) * 1024 * 1024
 
     for limit_name, bounds in (
         ("RLIMIT_CPU", (cpu_soft, cpu_hard)),
@@ -216,7 +227,12 @@ def _apply_posix_limits(timeout_seconds: int, memory_limit_mb: int) -> None:
         if limit_const is None:
             continue
         try:
-            resource.setrlimit(limit_const, bounds)
+            _, cur_hard = resource.getrlimit(limit_const)
+            soft, hard = bounds
+            if cur_hard != resource.RLIM_INFINITY:
+                soft = min(soft, cur_hard)
+                hard = min(hard, cur_hard)
+            resource.setrlimit(limit_const, (soft, hard))
         except (OSError, ValueError):
             continue
 

@@ -55,9 +55,9 @@ Evaluating pure fenced code-generation alone misses LangGraph multi-tool orchest
 
 ---
 
-## 4. Analytical 4 GB VRAM Budget & QLoRA / Distillation Feasibility
+## 4. Analytical 4 GB VRAM Budget & QLoRA / Distillation Status
 
-Generated via [`src/spectrumbloom/optimization/vram_budget.py`](../src/spectrumbloom/optimization/vram_budget.py) and [`src/spectrumbloom/optimization/qlora.py`](../src/spectrumbloom/optimization/qlora.py):
+> **Note:** Tables in this section are **analytical estimates** computed from weight bit-widths, KV cache formulas, and overhead constants in [`src/spectrumbloom/optimization/vram_budget.py`](../src/spectrumbloom/optimization/vram_budget.py) and [`src/spectrumbloom/optimization/qlora.py`](../src/spectrumbloom/optimization/qlora.py), **not** measured PyTorch CUDA profiler runs.
 
 ### Analytical Inference Envelope (`num_ctx=4096`)
 

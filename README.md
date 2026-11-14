@@ -45,7 +45,10 @@ See full architectural details in [docs/architecture.md](docs/architecture.md), 
    - **Never** falls back to unrestricted execution when an isolation backend is unavailable (`SandboxUnavailableError`).
    - Static AST gate rejects disallowed imports, dunder traversal, `eval`/`exec`/`getattr`/`open`, and pandas `df.eval()` / `df.query()`.
    - Pickle-free IPC via PyArrow Parquet (with typed JSON fallback).
-   - Isolated subprocess runtime (`python -I`, restricted environment, socket class/DNS kill-switch, prefix-restricted read-only `open()`) guarded by **Windows Kernel Job Objects** (`JobMemoryLimit` + process-tree termination) / **POSIX `rlimit`** + RSS watchdog, with optional strict `nsjail` (`sandbox/nsjail.cfg`) or hardened `Dockerfile.sandbox` container mode.
+   - **Isolation Boundary Distinction:**
+     - `strict_subprocess` (portable local default): **process-level application restriction**, *not* equivalent to OS container/kernel isolation — combines `python -I`, stripped env, Python socket/DNS kill-switch, prefix-restricted read-only `open()`, and fail-closed OS limits (Windows Kernel Job Objects with explicit assignment verification, or POSIX `rlimit` + process-tree physical RSS watchdog).
+     - `docker` (`Dockerfile.sandbox`, verified E2E): non-privileged per-run Linux container (`--network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=64 --memory=...`).
+     - `nsjail` (`sandbox/nsjail.cfg`): implemented fail-closed adapter for Linux hosts with `nsjail` installed (not verified in CI without an `nsjail` binary).
 
 4. **Separate Baseline ML Lab (`ml/experiments.py`)**
    - Leak-safe `ColumnTransformer` + `Pipeline` with cross-validation (`Dummy`, `LogisticRegression`/`Ridge`, `RandomForest`, `HistGradientBoosting`), held-out test metrics, permutation feature importance, and interactive Plotly diagnostics.
@@ -69,7 +72,22 @@ Measured on an **NVIDIA GeForce RTX 3050 Laptop GPU (4096 MiB)** running Ollama 
 | `qwen2.5-coder:1.5b-instruct-q4_K_M` | `Q4_K_M` | `tool_calling` | 1115.2 | 25.0% | 25.0% | 0.0% | 3053.6 | 92.82 |
 | `qwen3:4b-instruct` | `Q4_K_M` | `tool_calling` | 2236.0 | 87.5% | 87.5% | **87.5%** | 8271.9 | 19.02 |
 
-See [docs/optimization-report.md](docs/optimization-report.md) for the analytical RTX 3050 4 GB inference/QLoRA feasibility matrix and execution-verified distillation results (**6/8 verified trajectories** saved to [`benchmarks/distilled_eda_sft.jsonl`](benchmarks/distilled_eda_sft.jsonl)).
+See [docs/optimization-report.md](docs/optimization-report.md) for the breakdown between measured Ollama benchmarks, analytical 4 GB VRAM estimates, dry-run QLoRA feasibility guards (`qlora.py` CUDA training not executed), and execution-verified SFT distillation trajectories (**6/8 verified trajectories** saved to [`benchmarks/distilled_eda_sft.jsonl`](benchmarks/distilled_eda_sft.jsonl)).
+
+---
+
+## Verification, Estimates & Implementation Status
+
+| Component | Status | Evidence / Scope |
+| --- | --- | --- |
+| FastAPI REST + Deterministic EDA + Leak-Safe ML + Auth Guards | Verified | Unit & integration tests (`tests/`) + hardened production config validator |
+| `SubprocessSandbox` (Windows Job Object & Linux RSS Watchdog) | Verified | Unit tests on Windows + Linux (CI), plus failed Job Object assignment tests |
+| `DockerSandbox` (`Dockerfile.sandbox`) | Verified | Real end-to-end container tests (`tests/integration/test_docker_sandbox.py`) |
+| Full E2E Agent Workflow (LangGraph + Ollama `qwen3:4b-instruct` + Sandbox + Plotly) | Verified | Executed live against Ollama + Uvicorn using [`examples/sample_api_workflow.py`](examples/sample_api_workflow.py) |
+| Quantization Sweep (`Q2_K` / `Q4_K_M` / `Q8_0` / `Qwen3-4B`) | Measured | Empirical Ollama benchmark runs in `benchmarks/results/` |
+| Inference VRAM Budget & QLoRA Memory Table (`vram_budget.py`, `qlora.py`) | Analytical estimate | Calculated from parameter count/quant formulas + `qlora.py --check-only`; CUDA weight updates **not run** |
+| SFT Trajectory Distillation (`distillation.py`) | Executed (dataset only) | Generated `6/8` execution-verified JSONL examples; downstream PyTorch QLoRA fine-tuning **not run** |
+| `NsjailSandbox`, `RedisSessionRepository`, `S3DatasetStore`, `llama.cpp`, External OpenAI/Gemini, Live OTLP/Langfuse/DeepEval, Cloud Run, HF Spaces | Implemented, not E2E tested live | Code/adapters/manifests implemented and tested offline or fail-closed where applicable; live external deployments not run |
 
 ---
 
@@ -123,7 +141,7 @@ python examples/sample_api_workflow.py
 | `POST` | `/api/v1/sessions/{session_id}/ml/experiment` | Run leak-safe CV baseline ML comparison & permutation importance |
 | `POST` | `/api/v1/sessions/{session_id}/query` | Execute a multi-step agentic EDA query with evaluation |
 
-When `API_AUTH_TOKEN` is set in `.env`, all `/api/v1/*` routes enforce `Authorization: Bearer <token>`.
+`API_HOST` defaults to `127.0.0.1` to prevent accidental unauthenticated network exposure. When `APP_ENV=production` or `staging`, startup requires a strong `API_AUTH_TOKEN` (`>= 16` chars, non-placeholder) and disallows wildcard CORS (`*`). In `development`, binding a non-loopback `API_HOST` without `API_AUTH_TOKEN` is rejected at startup. When configured, `/api/v1/*` routes enforce `Authorization: Bearer <token>`.
 
 ---
 

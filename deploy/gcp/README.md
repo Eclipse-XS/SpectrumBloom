@@ -10,7 +10,7 @@ If you choose to deploy to Google Cloud Run (scales to zero when idle):
    gcloud builds submit --tag REGION-docker.pkg.dev/PROJECT_ID/spectrumbloom/api:latest .
    ```
 
-2. Update `PROJECT_ID` and `REGION` in `cloudrun-api.yaml`, inject any optional provider/API tokens via Secret Manager, and deploy:
+2. Create a Secret Manager secret `spectrumbloom-api-auth-token` (required because `APP_ENV=production` refuses unauthenticated startup), update `PROJECT_ID` and `REGION` in `cloudrun-api.yaml`, inject any optional LLM provider keys via Secret Manager, and deploy:
 
    ```bash
    gcloud run services replace deploy/gcp/cloudrun-api.yaml --region REGION

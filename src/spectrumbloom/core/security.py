@@ -51,10 +51,18 @@ def verify_api_token(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> None:
-    """Enforce Bearer token auth when API_AUTH_TOKEN is configured."""
+    """Enforce Bearer token auth (mandatory in staging/production; optional in dev/test)."""
     settings: Settings = request.app.state.settings
     expected = (settings.api_auth_token or "").strip()
     if not expected:
+        if settings.app_env in {"production", "staging"}:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Authentication is required in staging/production, "
+                    "but API_AUTH_TOKEN is not configured."
+                ),
+            )
         return
 
     if not authorization or not authorization.lower().startswith("bearer "):

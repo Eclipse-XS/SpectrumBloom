@@ -86,6 +86,9 @@ packages = ["src/spectrumbloom"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
+markers = [
+  "docker_sandbox: End-to-end tests requiring local Docker daemon and spectrumbloom-sandbox:latest.",
+]
 
 [tool.ruff]
 line-length = 100

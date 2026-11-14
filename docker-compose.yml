@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: spectrumbloom-api
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env.example
     environment:
@@ -32,7 +32,7 @@ services:
       dockerfile: Dockerfile
     container_name: spectrumbloom-ui
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     environment:
       SPECTRUMBLOOM_API_URL: http://api:8000
     command:

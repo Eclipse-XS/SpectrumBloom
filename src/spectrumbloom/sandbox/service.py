@@ -11,9 +11,9 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
 
 import pandas as pd
 
@@ -95,6 +95,7 @@ class _WindowsJobGuard:
         self._k32.CloseHandle.argtypes = [wt.HANDLE]
         self._k32.CloseHandle.restype = wt.BOOL
 
+        self.last_error: int = 0
         self.handle = self._k32.CreateJobObjectW(None, None)
         if not self.handle:
             raise OSError(f"CreateJobObjectW failed: {ctypes.get_last_error()}")
@@ -118,11 +119,15 @@ class _WindowsJobGuard:
 
     def assign(self, proc: subprocess.Popen[str]) -> bool:
         if not self.handle:
+            self.last_error = 6
             return False
         proc_handle = getattr(proc, "_handle", None)
         if proc_handle is None:
+            self.last_error = 6
             return False
-        return bool(self._k32.AssignProcessToJobObject(self.handle, int(proc_handle)))
+        ok = bool(self._k32.AssignProcessToJobObject(self.handle, int(proc_handle)))
+        self.last_error = 0 if ok else ctypes.get_last_error()
+        return ok
 
     def peak_memory_mb(self) -> float | None:
         if not self.handle:
@@ -150,17 +155,50 @@ class _WindowsJobGuard:
             self.handle = None
 
 
-def _get_posix_rss_mb(pid: int) -> float | None:
+def _read_proc_rss_mb(pid: int, page_size: int) -> float | None:
     statm_path = Path(f"/proc/{pid}/statm")
     if not statm_path.exists():
         return None
     try:
         parts = statm_path.read_text(encoding="utf-8").split()
         rss_pages = int(parts[1])
-        page_size = os.sysconf("SC_PAGE_SIZE")
         return (rss_pages * page_size) / (1024 * 1024)
     except Exception:
         return None
+
+
+def _get_posix_rss_mb(pid: int) -> float | None:
+    """Measure resident physical memory (RSS) for pid and any child processes."""
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):
+        return None
+
+    root_rss = _read_proc_rss_mb(pid, page_size)
+    if root_rss is None:
+        return None
+
+    total_rss = root_rss
+    seen = {pid}
+    queue = [pid]
+    while queue:
+        cur = queue.pop()
+        task_dir = Path(f"/proc/{cur}/task")
+        if not task_dir.exists():
+            continue
+        try:
+            for child_file in task_dir.glob("*/children"):
+                for token in child_file.read_text(encoding="utf-8").split():
+                    child_pid = int(token)
+                    if child_pid not in seen:
+                        seen.add(child_pid)
+                        queue.append(child_pid)
+                        child_rss = _read_proc_rss_mb(child_pid, page_size)
+                        if child_rss is not None:
+                            total_rss += child_rss
+        except (OSError, ValueError):
+            break
+    return total_rss
 
 
 def _serialize_df_for_sandbox(df: pd.DataFrame, sandbox_dir: Path) -> tuple[Path, str]:
@@ -207,7 +245,7 @@ def _minimal_sandbox_env(work_dir: Path) -> dict[str, str]:
     return env
 
 
-def _run_watched_subprocess(
+def _run_watched_posix_subprocess(
     command: list[str],
     *,
     cwd: Path,
@@ -215,23 +253,8 @@ def _run_watched_subprocess(
     timeout_seconds: int,
     memory_limit_mb: int,
 ) -> tuple[int, str, str, float | None, bool, bool]:
-    """Execute command with kernel Job Object (Windows) or setsid/RSS watchdog (POSIX)."""
+    """Execute command in its own POSIX session with physical RSS and wall-time watchdog."""
     start = time.perf_counter()
-    job_guard: _WindowsJobGuard | None = None
-    creationflags = 0
-    popen_kwargs: dict[str, Any] = {}
-
-    if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_SUSPENDED", 0x00000004)
-        popen_kwargs["creationflags"] = creationflags
-        try:
-            job_guard = _WindowsJobGuard(memory_limit_mb=memory_limit_mb)
-        except OSError:
-            job_guard = None
-            popen_kwargs["creationflags"] = 0
-    else:
-        popen_kwargs["start_new_session"] = True
-
     proc = subprocess.Popen(
         command,
         cwd=str(cwd),
@@ -240,16 +263,8 @@ def _run_watched_subprocess(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        **popen_kwargs,
+        start_new_session=True,
     )
-
-    if os.name == "nt" and job_guard is not None and creationflags:
-        job_guard.assign(proc)
-        # Resume main thread of suspended process
-        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        # Avoid CREATE_SUSPENDED thread-handle plumbing; AssignProcessToJobObject
-        # executes before the child spawns Python.
-        _ = k32
 
     peak_rss: float | None = None
     timed_out = False
@@ -259,42 +274,41 @@ def _run_watched_subprocess(
         while proc.poll() is None:
             if time.perf_counter() - start > timeout_seconds:
                 timed_out = True
-                if job_guard is not None:
-                    job_guard.terminate()
-                elif os.name != "nt":
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                break
+
+            rss = _get_posix_rss_mb(proc.pid)
+            if rss is not None:
+                peak_rss = max(peak_rss or 0.0, rss)
+                if rss > memory_limit_mb:
+                    oom_killed = True
                     try:
                         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                     except ProcessLookupError:
                         pass
-                else:
-                    proc.kill()
-                break
+                    break
 
-            if os.name != "nt":
-                rss = _get_posix_rss_mb(proc.pid)
-                if rss is not None:
-                    peak_rss = max(peak_rss or 0.0, rss)
-                    if rss > memory_limit_mb:
-                        oom_killed = True
-                        try:
-                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        break
-
-            time.sleep(0.025)
+            time.sleep(0.01)
 
         stdout, stderr = proc.communicate()
-        if job_guard is not None:
-            job_peak = job_guard.peak_memory_mb()
-            if job_peak is not None:
-                peak_rss = job_peak
-    finally:
-        if job_guard is not None:
-            job_guard.close()
+    except Exception:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+        raise
+
+    rc = proc.returncode if proc.returncode is not None else -1
+    sigxcpu = getattr(signal, "SIGXCPU", None)
+    if sigxcpu is not None and rc in (-sigxcpu, 128 + sigxcpu):
+        timed_out = True
 
     return (
-        proc.returncode if proc.returncode is not None else -1,
+        rc,
         stdout or "",
         stderr or "",
         peak_rss,
@@ -311,56 +325,58 @@ def _run_watched_windows_subprocess(
     timeout_seconds: int,
     memory_limit_mb: int,
 ) -> tuple[int, str, str, float | None, bool, bool]:
-    """Windows runner avoiding CREATE_SUSPENDED deadlock by spawning and assigning immediately."""
+    """Windows runner with fail-closed Kernel Job Object memory and process limits."""
     start = time.perf_counter()
-    job_guard: _WindowsJobGuard | None = None
     try:
         job_guard = _WindowsJobGuard(memory_limit_mb=memory_limit_mb)
-    except OSError:
-        job_guard = None
+    except OSError as exc:
+        raise SandboxUnavailableError(
+            f"Windows Job Object initialization failed (fail-closed): {exc}"
+        ) from exc
 
-    proc = subprocess.Popen(
-        command,
-        cwd=str(cwd),
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if job_guard is not None:
-        job_guard.assign(proc)
-
+    proc: subprocess.Popen[str] | None = None
     timed_out = False
     oom_killed = False
     peak_rss: float | None = None
 
     try:
+        proc = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if not job_guard.assign(proc):
+            err = job_guard.last_error
+            proc.kill()
+            proc.communicate()
+            raise SandboxUnavailableError(
+                "Failed to assign sandbox process to Windows Job Object "
+                f"(winerror={err}; fail-closed)."
+            )
+
         while proc.poll() is None:
             if time.perf_counter() - start > timeout_seconds:
                 timed_out = True
-                if job_guard is not None:
-                    job_guard.terminate()
-                else:
-                    proc.kill()
+                job_guard.terminate()
                 break
-            if job_guard is not None:
-                cur_peak = job_guard.peak_memory_mb()
-                if cur_peak is not None:
-                    peak_rss = cur_peak
-            time.sleep(0.025)
+            cur_peak = job_guard.peak_memory_mb()
+            if cur_peak is not None:
+                peak_rss = cur_peak
+            time.sleep(0.01)
 
         stdout, stderr = proc.communicate()
-        if job_guard is not None:
-            final_peak = job_guard.peak_memory_mb()
-            if final_peak is not None:
-                peak_rss = final_peak
+        final_peak = job_guard.peak_memory_mb()
+        if final_peak is not None:
+            peak_rss = final_peak
     finally:
-        if job_guard is not None:
-            job_guard.close()
+        job_guard.close()
 
     return (
-        proc.returncode if proc.returncode is not None else -1,
+        proc.returncode if proc is not None and proc.returncode is not None else -1,
         stdout or "",
         stderr or "",
         peak_rss,
@@ -427,7 +443,9 @@ class SubprocessSandbox:
             ]
 
             runner_fn = (
-                _run_watched_windows_subprocess if os.name == "nt" else _run_watched_subprocess
+                _run_watched_windows_subprocess
+                if os.name == "nt"
+                else _run_watched_posix_subprocess
             )
             rc, _stdout, stderr, peak_rss, timed_out, oom_killed = runner_fn(
                 command,
@@ -512,10 +530,23 @@ class DockerSandbox:
             data_file, data_format = _serialize_df_for_sandbox(df, sandbox_path)
             code_file.write_text(clean_code, encoding="utf-8")
 
+            user_args: list[str] = []
+            if os.name != "nt" and hasattr(os, "getuid"):
+                uid = os.getuid()
+                if uid == 0:
+                    for p in (sandbox_path, code_file, data_file):
+                        shutil.chown(p, user=10001, group=10001)
+                else:
+                    user_args = ["--user", f"{uid}:{os.getgid()}"]
+
+            container_name = f"sb_{uuid.uuid4().hex[:12]}"
             command = [
                 self.docker_bin,
                 "run",
                 "--rm",
+                "--init",
+                "--name",
+                container_name,
                 "--network=none",
                 "--read-only",
                 "--cap-drop=ALL",
@@ -525,6 +556,9 @@ class DockerSandbox:
                 f"--memory={self.memory_limit_mb}m",
                 f"--memory-swap={self.memory_limit_mb}m",
                 "--tmpfs=/tmp:rw,noexec,nosuid,size=16m",
+                "-e",
+                "HOME=/tmp",
+                *user_args,
                 "-v",
                 f"{sandbox_path}:/sandbox:rw",
                 self.image,
@@ -551,20 +585,41 @@ class DockerSandbox:
                     command,
                     capture_output=True,
                     text=True,
-                    timeout=self.timeout_seconds + 5,
+                    timeout=self.timeout_seconds + 8,
                     stdin=subprocess.DEVNULL,
                 )
             except subprocess.TimeoutExpired as exc:
+                subprocess.run(
+                    [self.docker_bin, "rm", "-f", container_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    stdin=subprocess.DEVNULL,
+                )
                 raise SandboxTimeoutError(
                     f"Docker sandbox timed out after {self.timeout_seconds}s."
                 ) from exc
 
             duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
-            if completed.returncode != 0 and not output_file.exists():
-                raise SandboxUnavailableError(
-                    "Docker sandbox backend failed to run (fail-closed; no fallback): "
-                    + (completed.stderr.strip() or f"exit={completed.returncode}")
-                )
+            if not output_file.exists():
+                if completed.returncode in (124, 152):
+                    raise SandboxTimeoutError(
+                        f"Docker sandbox exceeded CPU/time limit of {self.timeout_seconds}s."
+                    )
+                if completed.returncode == 137:
+                    return SandboxExecutionResult(
+                        error=(
+                            f"Execution terminated: container memory exceeded "
+                            f"{self.memory_limit_mb} MB limit (SIGKILL / exit 137)."
+                        ),
+                        backend=self.backend_name,
+                        duration_ms=duration_ms,
+                    )
+                if completed.returncode != 0:
+                    raise SandboxUnavailableError(
+                        "Docker sandbox backend failed to run (fail-closed; no fallback): "
+                        + (completed.stderr.strip() or f"exit={completed.returncode}")
+                    )
 
             if output_file.exists():
                 payload = json.loads(output_file.read_text(encoding="utf-8"))

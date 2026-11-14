@@ -25,6 +25,11 @@ spec:
           env:
             - name: APP_ENV
               value: production
+            - name: API_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: spectrumbloom-api-auth-token
+                  key: latest
             - name: DATASET_STORAGE_BACKEND
               value: local
             - name: LOCAL_DATASET_DIR

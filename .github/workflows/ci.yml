@@ -32,8 +32,11 @@ jobs:
       - name: Lint with Ruff
         run: uv run ruff check src tests
 
+      - name: Check formatting with Ruff
+        run: uv run ruff format --check src tests
+
       - name: Run unit, integration, and deterministic eval tests
-        run: uv run pytest -v --tb=short
+        run: uv run pytest -v --tb=short -m "not docker_sandbox"
 
   docker-build-check:
     runs-on: ubuntu-latest
@@ -55,3 +58,24 @@ jobs:
           tags: spectrumbloom:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Build SpectrumBloom Sandbox image (load locally for E2E test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sandbox
+          push: false
+          load: true
+          tags: spectrumbloom-sandbox:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set up Python & uv for Docker sandbox E2E test
+        uses: astral-sh/setup-uv@v4
+
+      - name: Run real DockerSandbox end-to-end tests
+        run: |
+          uv python install 3.12
+          uv venv --python 3.12
+          uv pip install pytest pandas pyarrow pydantic pydantic-settings
+          uv run pytest -v --tb=short -m docker_sandbox tests/integration/test_docker_sandbox.py

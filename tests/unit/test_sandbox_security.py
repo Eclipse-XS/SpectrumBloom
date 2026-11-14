@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+
 import pandas as pd
 import pytest
 
@@ -12,7 +16,12 @@ from spectrumbloom.domain.exceptions import (
     SandboxUnavailableError,
 )
 from spectrumbloom.sandbox.ast_guard import validate_code_safety
-from spectrumbloom.sandbox.service import SubprocessSandbox, create_sandbox
+from spectrumbloom.sandbox.service import (
+    SubprocessSandbox,
+    _run_watched_windows_subprocess,
+    _WindowsJobGuard,
+    create_sandbox,
+)
 
 
 @pytest.fixture()
@@ -48,7 +57,7 @@ def test_ast_guard_blocks_unsafe_constructs(unsafe_code: str) -> None:
 
 
 def test_sandbox_executes_valid_eda_and_plotly(sample_df: pd.DataFrame) -> None:
-    sb = SubprocessSandbox(timeout_seconds=10, memory_limit_mb=512)
+    sb = SubprocessSandbox(timeout_seconds=30, memory_limit_mb=512)
     res = sb.execute(
         """
 import plotly.express as px
@@ -70,7 +79,7 @@ print("done")
 
 
 def test_sandbox_allows_safe_dataframe_replace(sample_df: pd.DataFrame) -> None:
-    sb = SubprocessSandbox(timeout_seconds=10, memory_limit_mb=512)
+    sb = SubprocessSandbox(timeout_seconds=25, memory_limit_mb=512)
     res = sb.execute(
         (
             'cleaned = df["category"].replace({"A": "Alpha"})\n'
@@ -89,12 +98,14 @@ def test_sandbox_enforces_timeout(sample_df: pd.DataFrame) -> None:
 
 
 def test_sandbox_enforces_memory_cap(sample_df: pd.DataFrame) -> None:
-    sb = SubprocessSandbox(timeout_seconds=10, memory_limit_mb=384)
+    sb = SubprocessSandbox(timeout_seconds=25, memory_limit_mb=384)
     res = sb.execute(
-        "buf = bytearray(500 * 1024 * 1024)\nbuf[::4096] = b'x' * (128000)",
+        "arr = np.full((520, 1024, 1024), 7, dtype=np.uint8)\nresult = int(arr[0, 0, 0])",
         sample_df,
     )
     assert res.error is not None
+    assert "NameError" not in res.error
+    assert any(tok in res.error.lower() for tok in ("memory", "unable to allocate"))
 
 
 def test_fail_closed_when_nsjail_unavailable() -> None:
@@ -104,7 +115,7 @@ def test_fail_closed_when_nsjail_unavailable() -> None:
 
 
 def test_sandbox_captures_trailing_repl_expression(sample_df: pd.DataFrame) -> None:
-    sb = SubprocessSandbox(timeout_seconds=10, memory_limit_mb=512)
+    sb = SubprocessSandbox(timeout_seconds=25, memory_limit_mb=512)
     res = sb.execute("df['amount'].sum()", sample_df)
     assert res.error is None
     assert res.result == pytest.approx(150.0)
@@ -113,3 +124,85 @@ def test_sandbox_captures_trailing_repl_expression(sample_df: pd.DataFrame) -> N
 def test_ast_guard_does_not_unwrap_json_fence() -> None:
     with pytest.raises(SandboxSecurityError):
         validate_code_safety('```json\n{"name": "python_repl"}\n```')
+
+
+def test_windows_job_guard_fails_closed_on_init_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fail_init(self: object, memory_limit_mb: int) -> None:
+        raise OSError("simulated CreateJobObjectW failure")
+
+    monkeypatch.setattr(_WindowsJobGuard, "__init__", _fail_init)
+    with pytest.raises(SandboxUnavailableError, match="Job Object initialization failed"):
+        _run_watched_windows_subprocess(
+            [sys.executable, "-c", "print(1)"],
+            cwd=os.getcwd(),  # type: ignore[arg-type]
+            env=os.environ.copy(),
+            timeout_seconds=5,
+            memory_limit_mb=256,
+        )
+
+
+def test_windows_job_guard_fails_closed_when_assign_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    killed: list[bool] = []
+    closed: list[bool] = []
+
+    class _DummyJob:
+        def __init__(self, memory_limit_mb: int) -> None:
+            self.last_error = 5  # ERROR_ACCESS_DENIED
+
+        def assign(self, proc: object) -> bool:
+            return False
+
+        def close(self) -> None:
+            closed.append(True)
+
+    class _DummyProc:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.returncode = None
+
+        def kill(self) -> None:
+            killed.append(True)
+            self.returncode = -9
+
+        def communicate(self) -> tuple[str, str]:
+            return ("", "")
+
+    monkeypatch.setattr("spectrumbloom.sandbox.service._WindowsJobGuard", _DummyJob)
+    monkeypatch.setattr(subprocess, "Popen", _DummyProc)
+
+    with pytest.raises(SandboxUnavailableError, match="winerror=5"):
+        _run_watched_windows_subprocess(
+            [sys.executable, "-c", "print(1)"],
+            cwd=os.getcwd(),  # type: ignore[arg-type]
+            env=os.environ.copy(),
+            timeout_seconds=5,
+            memory_limit_mb=256,
+        )
+
+    assert killed == [True]
+    assert closed == [True]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Kernel Job Object integration test")
+def test_windows_job_guard_real_lifecycle() -> None:
+    guard = _WindowsJobGuard(memory_limit_mb=256)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert guard.assign(proc) is True
+        peak = guard.peak_memory_mb()
+        assert peak is not None and peak > 0.0
+        guard.terminate()
+        rc = proc.wait(timeout=5)
+        assert rc == 1
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        guard.close()
