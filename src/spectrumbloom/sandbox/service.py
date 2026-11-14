@@ -543,7 +543,6 @@ class DockerSandbox:
             command = [
                 self.docker_bin,
                 "run",
-                "--rm",
                 "--init",
                 "--name",
                 container_name,
@@ -581,14 +580,64 @@ class DockerSandbox:
                 str(self.max_output_chars),
             ]
             try:
-                completed = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout_seconds + 8,
-                    stdin=subprocess.DEVNULL,
-                )
-            except subprocess.TimeoutExpired as exc:
+                try:
+                    completed = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout_seconds + 8,
+                        stdin=subprocess.DEVNULL,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    raise SandboxTimeoutError(
+                        f"Docker sandbox timed out after {self.timeout_seconds}s."
+                    ) from exc
+
+                duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
+                if not output_file.exists():
+                    if completed.returncode in (124, 152):
+                        raise SandboxTimeoutError(
+                            f"Docker sandbox exceeded CPU/time limit of {self.timeout_seconds}s."
+                        )
+                    if completed.returncode == 137:
+                        insp = subprocess.run(
+                            [
+                                self.docker_bin,
+                                "inspect",
+                                "-f",
+                                "{{.State.OOMKilled}}",
+                                container_name,
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=5,
+                            stdin=subprocess.DEVNULL,
+                        )
+                        is_oom = insp.returncode == 0 and insp.stdout.strip().lower() == "true"
+                        if is_oom:
+                            return SandboxExecutionResult(
+                                error=(
+                                    f"Execution terminated: container memory exceeded "
+                                    f"{self.memory_limit_mb} MB limit "
+                                    "(cgroup OOMKilled / exit 137)."
+                                ),
+                                backend=self.backend_name,
+                                duration_ms=duration_ms,
+                            )
+                        if duration_ms >= self.timeout_seconds * 1000.0:
+                            raise SandboxTimeoutError(
+                                f"Docker sandbox exceeded CPU/time limit of "
+                                f"{self.timeout_seconds}s (SIGKILL)."
+                            )
+                        raise SandboxUnavailableError(
+                            "Docker sandbox container was killed unexpectedly (exit 137)."
+                        )
+                    if completed.returncode != 0:
+                        raise SandboxUnavailableError(
+                            "Docker sandbox backend failed to run (fail-closed; no fallback): "
+                            + (completed.stderr.strip() or f"exit={completed.returncode}")
+                        )
+            finally:
                 subprocess.run(
                     [self.docker_bin, "rm", "-f", container_name],
                     capture_output=True,
@@ -596,30 +645,6 @@ class DockerSandbox:
                     timeout=5,
                     stdin=subprocess.DEVNULL,
                 )
-                raise SandboxTimeoutError(
-                    f"Docker sandbox timed out after {self.timeout_seconds}s."
-                ) from exc
-
-            duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
-            if not output_file.exists():
-                if completed.returncode in (124, 152):
-                    raise SandboxTimeoutError(
-                        f"Docker sandbox exceeded CPU/time limit of {self.timeout_seconds}s."
-                    )
-                if completed.returncode == 137:
-                    return SandboxExecutionResult(
-                        error=(
-                            f"Execution terminated: container memory exceeded "
-                            f"{self.memory_limit_mb} MB limit (SIGKILL / exit 137)."
-                        ),
-                        backend=self.backend_name,
-                        duration_ms=duration_ms,
-                    )
-                if completed.returncode != 0:
-                    raise SandboxUnavailableError(
-                        "Docker sandbox backend failed to run (fail-closed; no fallback): "
-                        + (completed.stderr.strip() or f"exit={completed.returncode}")
-                    )
 
             if output_file.exists():
                 payload = json.loads(output_file.read_text(encoding="utf-8"))

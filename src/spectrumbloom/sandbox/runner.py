@@ -17,6 +17,7 @@ import math
 import os
 import signal
 import sys
+import time
 import traceback
 from contextlib import redirect_stdout
 from io import StringIO
@@ -200,16 +201,21 @@ def _apply_posix_limits(timeout_seconds: int, memory_limit_mb: int) -> None:
     except ImportError:
         return
 
-    sigxcpu = getattr(signal, "SIGXCPU", None)
-    if sigxcpu is not None:
+    def _on_timeout(_signum: int, _frame: Any) -> None:
+        os._exit(152)
 
-        def _on_sigxcpu(_signum: int, _frame: Any) -> None:
-            os._exit(152)
+    for sig_name in ("SIGXCPU", "SIGALRM"):
+        sig = getattr(signal, sig_name, None)
+        if sig is not None:
+            signal.signal(sig, _on_timeout)
 
-        signal.signal(sigxcpu, _on_sigxcpu)
+    if hasattr(signal, "alarm"):
+        signal.alarm(max(1, timeout_seconds))
 
-    cpu_soft = max(1, timeout_seconds)
-    cpu_hard = cpu_soft + 1
+    # Include CPU spent importing heavy scientific modules before user execution.
+    used_cpu = math.ceil(time.process_time())
+    cpu_soft = used_cpu + max(1, timeout_seconds)
+    cpu_hard = cpu_soft + 2
     file_bytes = 2 * 1024 * 1024  # small temp scratch cap
 
     # Virtual address space must accommodate OpenBLAS/PyArrow/Plotly shared
@@ -338,7 +344,11 @@ def _run(
     }
 
     with redirect_stdout(stdout_buf):
-        exec(compiled, env_vars, env_vars)
+        try:
+            exec(compiled, env_vars, env_vars)
+        finally:
+            if hasattr(signal, "alarm"):
+                signal.alarm(0)
 
     last_val = env_vars.get("_sb_last_expr")
     if last_val is not None:
