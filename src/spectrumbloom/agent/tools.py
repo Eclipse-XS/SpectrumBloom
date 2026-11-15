@@ -5,7 +5,66 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+FilterOpLiteral = Literal[
+    "==", "!=", ">", ">=", "<", "<=", "in", "not_in", "isna", "notna", "contains"
+]
+
+_AGG_ALIASES: dict[str, str] = {
+    "avg": "mean",
+    "average": "mean",
+    "med": "median",
+    "stddev": "std",
+    "stdev": "std",
+    "minimum": "min",
+    "maximum": "max",
+    "cnt": "count",
+    "nrows": "count",
+    "row_count": "count",
+    "rows": "count",
+    "n": "count",
+}
+
+_FILTER_OP_ALIASES: dict[str, str] = {
+    "=": "==",
+    "eq": "==",
+    "ne": "!=",
+    "<>": "!=",
+    "gt": ">",
+    "gte": ">=",
+    "ge": ">=",
+    "lt": "<",
+    "lte": "<=",
+    "le": "<=",
+    "not in": "not_in",
+    "notin": "not_in",
+    "not_in": "not_in",
+    "isnull": "isna",
+    "is_null": "isna",
+    "null": "isna",
+    "notnull": "notna",
+    "is_not_null": "notna",
+    "not_null": "notna",
+    "like": "contains",
+}
+
+_TEST_TYPE_ALIASES: dict[str, str] = {
+    "mann-whitney": "mannwhitney",
+    "mann_whitney": "mannwhitney",
+    "mannwhitneyu": "mannwhitney",
+    "kruskal-wallis": "kruskal",
+    "kruskal_wallis": "kruskal",
+    "kruskalwallis": "kruskal",
+    "oneway": "anova",
+    "one-way": "anova",
+    "f_oneway": "anova",
+    "shapiro": "normality",
+    "shapiro-wilk": "normality",
+    "dagostino": "normality",
+    "iqr": "outliers_iqr",
+    "outliers": "outliers_iqr",
+}
 
 
 class StatisticalSummaryInput(BaseModel):
@@ -40,18 +99,95 @@ class AggregateDataInput(BaseModel):
         default=None,
         description="Optional column name or list of columns to group results by.",
     )
-    filter_column: str | None = Field(default=None, description="Optional first filter column.")
-    filter_op: Literal["==", "!=", ">", ">=", "<", "<=", "isna", "notna", "contains"] | None = (
-        Field(default=None, description="Optional first filter operator.")
+    filter_column: str | None = Field(
+        default=None,
+        description=(
+            "Optional row filter column. MUST remain null/None unless the user explicitly "
+            "asks to filter or restrict to a subset."
+        ),
     )
-    filter_value: Any = Field(default=None, description="Value for first filter.")
-    filter2_column: str | None = Field(default=None, description="Optional second filter column.")
-    filter2_op: Literal["==", "!=", ">", ">=", "<", "<=", "isna", "notna", "contains"] | None = (
-        Field(default=None, description="Optional second filter operator.")
+    filter_op: FilterOpLiteral | None = Field(
+        default=None,
+        description=(
+            "Optional filter operator ('==', '!=', '>', '>=', '<', '<=', 'in', "
+            "'not_in', 'isna', 'notna', 'contains'). MUST remain null unless filtering rows."
+        ),
     )
-    filter2_value: Any = Field(default=None, description="Value for second filter.")
+    filter_value: Any = Field(
+        default=None,
+        description="Value (or list of values for 'in'/'not_in') for first filter.",
+    )
+    filter2_column: str | None = Field(
+        default=None,
+        description=(
+            "Optional SECOND AND-filter column narrowing the SAME subset further. To compare "
+            "two disjoint subsets (e.g., X >= T vs X < T), invoke aggregate_data TWICE."
+        ),
+    )
+    filter2_op: FilterOpLiteral | None = Field(
+        default=None,
+        description="Optional second AND-filter operator. Leave null unless narrowing filter 1.",
+    )
+    filter2_value: Any = Field(default=None, description="Value for second AND-filter.")
     sort_desc: bool = Field(default=True, description="Sort grouped values descending.")
-    limit: int = Field(default=20, ge=1, le=50, description="Max groups to return.")
+    limit: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Max groups to return (positive integer 1-100; default 20).",
+    )
+
+    @field_validator("agg_func", mode="before")
+    @classmethod
+    def _normalize_agg_func(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            norm = value.strip().lower()
+            return _AGG_ALIASES.get(norm, norm)
+        return value
+
+    @field_validator("filter_op", "filter2_op", mode="before")
+    @classmethod
+    def _normalize_filter_op(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            norm = value.strip().lower()
+            if not norm:
+                return None
+            return _FILTER_OP_ALIASES.get(norm, norm)
+        return value
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def _normalize_limit(cls, value: Any) -> int:
+        if value is None or value == "":
+            return 20
+        try:
+            num = int(value)
+        except (TypeError, ValueError):
+            return 20
+        if num <= 0:
+            return 20
+        return min(num, 100)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _clean_empty_filters(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        cleaned = dict(data)
+        for prefix in ("filter", "filter2"):
+            col = cleaned.get(f"{prefix}_column")
+            if col is None or (isinstance(col, str) and not col.strip()):
+                cleaned[f"{prefix}_column"] = None
+                cleaned[f"{prefix}_op"] = None
+                cleaned[f"{prefix}_value"] = None
+            elif (
+                cleaned.get(f"{prefix}_op") in (None, "")
+                and cleaned.get(f"{prefix}_value") is not None
+            ):
+                cleaned[f"{prefix}_op"] = "=="
+        return cleaned
 
 
 class StatisticalTestInput(BaseModel):
@@ -72,18 +208,40 @@ class StatisticalTestInput(BaseModel):
     column_b: str | None = Field(
         default=None,
         description=(
-            "Second numeric column, categorical grouping column (for kruskal/anova/mannwhitney), "
-            "or second categorical column (for chi2)."
+            "Second numeric column (for correlation), categorical grouping column (REQUIRED for "
+            "kruskal/anova/mannwhitney, e.g. 'region'), or second categorical column (for chi2)."
         ),
     )
     group_a: str | None = Field(
         default=None,
-        description="Optional first group label (for two-group mannwhitney).",
+        description="Optional first group label (for two-group mannwhitney, e.g. 'malignant').",
     )
     group_b: str | None = Field(
         default=None,
-        description="Optional second group label (for two-group mannwhitney).",
+        description="Optional second group value label (for two-group mannwhitney, e.g. 'benign').",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_stat_inputs(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        cleaned = dict(data)
+        raw_type = cleaned.get("test_type")
+        if isinstance(raw_type, str):
+            norm_type = raw_type.strip().lower()
+            cleaned["test_type"] = _TEST_TYPE_ALIASES.get(norm_type, norm_type)
+        if not cleaned.get("column_a"):
+            for alias in ("metric_column", "metric", "column"):
+                if cleaned.get(alias):
+                    cleaned["column_a"] = cleaned[alias]
+                    break
+        if not cleaned.get("column_b"):
+            for alias in ("group_column", "group_by", "grouping_column", "hue"):
+                if cleaned.get(alias):
+                    cleaned["column_b"] = cleaned[alias]
+                    break
+        return cleaned
 
 
 class StandardChartInput(BaseModel):

@@ -1,0 +1,492 @@
+[
+  {
+    "id": "hold_ecom_01_filter",
+    "dataset": "sample_ecommerce.csv",
+    "category": "filtering",
+    "thread_group": "hold_ecom_01",
+    "turn_index": 1,
+    "prompt": "Count how many orders have quantity <= 3 and region != 'North'.",
+    "assertion": {
+      "op": "filtered_count",
+      "filters": [
+        [
+          "quantity",
+          "<=",
+          3
+        ],
+        [
+          "region",
+          "!=",
+          "North"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "hold_ecom_02_agg",
+    "dataset": "sample_ecommerce.csv",
+    "category": "aggregation",
+    "thread_group": "hold_ecom_02",
+    "turn_index": 1,
+    "prompt": "Compute the median revenue grouped by channel for every channel.",
+    "assertion": {
+      "op": "groupby_all",
+      "group_by": "channel",
+      "metric": "revenue",
+      "agg": "median"
+    }
+  },
+  {
+    "id": "hold_ecom_03_stat",
+    "dataset": "sample_ecommerce.csv",
+    "category": "statistical_test",
+    "thread_group": "hold_ecom_03",
+    "turn_index": 1,
+    "prompt": "Compute the Spearman correlation and p-value between discount_pct and satisfaction_score.",
+    "assertion": {
+      "op": "corr",
+      "method": "spearman",
+      "col_a": "discount_pct",
+      "col_b": "satisfaction_score"
+    }
+  },
+  {
+    "id": "hold_ecom_04_mt1",
+    "dataset": "sample_ecommerce.csv",
+    "category": "multi_turn",
+    "thread_group": "hold_ecom_mt",
+    "turn_index": 1,
+    "prompt": "Which channel has the lowest total revenue?",
+    "assertion": {
+      "op": "groupby_bottom",
+      "group_by": "channel",
+      "metric": "revenue",
+      "agg": "sum"
+    }
+  },
+  {
+    "id": "hold_ecom_05_mt2",
+    "dataset": "sample_ecommerce.csv",
+    "category": "multi_turn",
+    "thread_group": "hold_ecom_mt",
+    "turn_index": 2,
+    "prompt": "For that channel only, what is the mean satisfaction_score?",
+    "assertion": {
+      "op": "bottom_group_metric",
+      "group_by": "channel",
+      "rank_metric": "revenue",
+      "rank_agg": "sum",
+      "target_metric": "satisfaction_score",
+      "target_agg": "mean"
+    }
+  },
+  {
+    "id": "hold_peng_01_profile",
+    "dataset": "palmer_penguins.csv",
+    "category": "profiling",
+    "thread_group": "hold_peng_01",
+    "turn_index": 1,
+    "prompt": "Provide a profile of this dataset including total rows, columns, missing values, and duplicate rows.",
+    "assertion": {
+      "op": "shape_and_dups"
+    }
+  },
+  {
+    "id": "hold_peng_02_filter",
+    "dataset": "palmer_penguins.csv",
+    "category": "filtering",
+    "thread_group": "hold_peng_02",
+    "turn_index": 1,
+    "prompt": "Filter to penguins with bill_length_mm >= 45 and body_mass_g <= 5000. How many match?",
+    "assertion": {
+      "op": "filtered_count",
+      "filters": [
+        [
+          "bill_length_mm",
+          ">=",
+          45
+        ],
+        [
+          "body_mass_g",
+          "<=",
+          5000
+        ]
+      ]
+    }
+  },
+  {
+    "id": "hold_peng_03_diff",
+    "dataset": "palmer_penguins.csv",
+    "category": "multi_step",
+    "thread_group": "hold_peng_03",
+    "turn_index": 1,
+    "prompt": "Compute mean body_mass_g for Gentoo and Adelie species, and state the difference (Gentoo mean minus Adelie mean).",
+    "assertion": {
+      "op": "group_diff",
+      "group_col": "species",
+      "metric": "body_mass_g",
+      "val_a": "Gentoo",
+      "val_b": "Adelie"
+    }
+  },
+  {
+    "id": "hold_peng_04_mt1",
+    "dataset": "palmer_penguins.csv",
+    "category": "multi_turn",
+    "thread_group": "hold_peng_mt",
+    "turn_index": 1,
+    "prompt": "Filter to penguins where sex == 'MALE'; what is the median bill_depth_mm?",
+    "assertion": {
+      "op": "filtered_agg",
+      "filters": [
+        [
+          "sex",
+          "==",
+          "MALE"
+        ]
+      ],
+      "metric": "bill_depth_mm",
+      "agg": "median"
+    }
+  },
+  {
+    "id": "hold_peng_05_mt2",
+    "dataset": "palmer_penguins.csv",
+    "category": "multi_turn",
+    "thread_group": "hold_peng_mt",
+    "turn_index": 2,
+    "prompt": "Now compute the median bill_depth_mm for 'FEMALE' instead to compare.",
+    "assertion": {
+      "op": "filtered_agg",
+      "filters": [
+        [
+          "sex",
+          "==",
+          "FEMALE"
+        ]
+      ],
+      "metric": "bill_depth_mm",
+      "agg": "median"
+    }
+  },
+  {
+    "id": "hold_bc_01_filter",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "filtering",
+    "thread_group": "hold_bc_01",
+    "turn_index": 1,
+    "prompt": "How many records have 'worst perimeter' <= 90 and diagnosis == 'benign'?",
+    "assertion": {
+      "op": "filtered_count",
+      "filters": [
+        [
+          "worst perimeter",
+          "<=",
+          90
+        ],
+        [
+          "diagnosis",
+          "==",
+          "benign"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "hold_bc_02_agg",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "aggregation",
+    "thread_group": "hold_bc_02",
+    "turn_index": 1,
+    "prompt": "Compute the median 'mean texture' grouped by diagnosis for both groups.",
+    "assertion": {
+      "op": "groupby_all",
+      "group_by": "diagnosis",
+      "metric": "mean texture",
+      "agg": "median"
+    }
+  },
+  {
+    "id": "hold_bc_03_stat",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "statistical_test",
+    "thread_group": "hold_bc_03",
+    "turn_index": 1,
+    "prompt": "Run a Mann-Whitney U test comparing 'worst symmetry' between 'malignant' and 'benign' diagnosis and report the p-value.",
+    "assertion": {
+      "op": "group_test",
+      "test": "mannwhitney",
+      "metric": "worst symmetry",
+      "group": "diagnosis",
+      "group_a": "malignant",
+      "group_b": "benign"
+    }
+  },
+  {
+    "id": "hold_bc_04_norm",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "statistical_test",
+    "thread_group": "hold_bc_04",
+    "turn_index": 1,
+    "prompt": "Test normality of 'mean smoothness' and report the test statistic and p-value.",
+    "assertion": {
+      "op": "normality",
+      "column": "mean smoothness"
+    }
+  },
+  {
+    "id": "hold_bc_05_invalid",
+    "dataset": "breast_cancer_uci.csv",
+    "category": "invalid_input",
+    "thread_group": "hold_bc_05",
+    "turn_index": 1,
+    "prompt": "What is the mean of column 'tumor_grade_nonexistent'?",
+    "assertion": {
+      "op": "missing_column_handled",
+      "bad_column": "tumor_grade_nonexistent"
+    }
+  },
+  {
+    "id": "hold_wine_01_profile",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "profiling",
+    "thread_group": "hold_wine_01",
+    "turn_index": 1,
+    "prompt": "How many rows, columns, total missing cells, and duplicate rows are in the wine cultivars dataset?",
+    "assertion": {
+      "op": "shape_and_dups"
+    }
+  },
+  {
+    "id": "hold_wine_02_filter",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "filtering",
+    "thread_group": "hold_wine_02",
+    "turn_index": 1,
+    "prompt": "Filter to wines with malic_acid <= 1.5; how many rows match and what is the mean alcohol?",
+    "assertion": {
+      "op": "filtered_agg",
+      "filters": [
+        [
+          "malic_acid",
+          "<=",
+          1.5
+        ]
+      ],
+      "metric": "alcohol",
+      "agg": "mean"
+    }
+  },
+  {
+    "id": "hold_wine_03_ratio",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "multi_step",
+    "thread_group": "hold_wine_03",
+    "turn_index": 1,
+    "prompt": "Compute mean proline for cultivar 'class_0' vs 'class_2' and state the ratio (class_0 mean / class_2 mean).",
+    "assertion": {
+      "op": "group_ratio",
+      "group_by": "cultivar",
+      "metric": "proline",
+      "agg": "mean",
+      "num_group": "class_0",
+      "den_group": "class_2"
+    }
+  },
+  {
+    "id": "hold_wine_04_outliers",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "outliers",
+    "thread_group": "hold_wine_04",
+    "turn_index": 1,
+    "prompt": "Check for IQR outliers in the magnesium column and report the exact outlier count.",
+    "assertion": {
+      "op": "outliers_iqr",
+      "column": "magnesium"
+    }
+  },
+  {
+    "id": "hold_wine_05_chart",
+    "dataset": "wine_cultivars_uci.csv",
+    "category": "visualization",
+    "thread_group": "hold_wine_05",
+    "turn_index": 1,
+    "prompt": "Create a box plot of hue grouped by cultivar.",
+    "assertion": {
+      "op": "chart",
+      "expected_chart_kinds": [
+        "box"
+      ]
+    }
+  },
+  {
+    "id": "hold_macro_01_filter",
+    "dataset": "us_macro_fred.csv",
+    "category": "filtering",
+    "thread_group": "hold_macro_01",
+    "turn_index": 1,
+    "prompt": "Filter to rows with year >= 1995 and quarter != 1; how many rows match and what is the mean tbilrate?",
+    "assertion": {
+      "op": "filtered_agg",
+      "filters": [
+        [
+          "year",
+          ">=",
+          1995
+        ],
+        [
+          "quarter",
+          "!=",
+          1
+        ]
+      ],
+      "metric": "tbilrate",
+      "agg": "mean"
+    }
+  },
+  {
+    "id": "hold_macro_02_agg",
+    "dataset": "us_macro_fred.csv",
+    "category": "aggregation",
+    "thread_group": "hold_macro_02",
+    "turn_index": 1,
+    "prompt": "Compute the minimum, median, and maximum of tbilrate.",
+    "assertion": {
+      "op": "col_stats",
+      "column": "tbilrate",
+      "metrics": [
+        "min",
+        "median",
+        "max"
+      ]
+    }
+  },
+  {
+    "id": "hold_macro_03_split",
+    "dataset": "us_macro_fred.csv",
+    "category": "multi_step",
+    "thread_group": "hold_macro_03",
+    "turn_index": 1,
+    "prompt": "Compare the mean infl for quarters with year >= 1985 versus quarters with year < 1985.",
+    "assertion": {
+      "op": "split_means",
+      "column": "infl",
+      "split_col": "year",
+      "split_val": 1985
+    }
+  },
+  {
+    "id": "hold_macro_04_mt1",
+    "dataset": "us_macro_fred.csv",
+    "category": "multi_turn",
+    "thread_group": "hold_macro_mt",
+    "turn_index": 1,
+    "prompt": "Filter to observations where year < 1980; what are the row count and mean cpi?",
+    "assertion": {
+      "op": "filtered_agg",
+      "filters": [
+        [
+          "year",
+          "<",
+          1980
+        ]
+      ],
+      "metric": "cpi",
+      "agg": "mean"
+    }
+  },
+  {
+    "id": "hold_macro_05_mt2",
+    "dataset": "us_macro_fred.csv",
+    "category": "multi_turn",
+    "thread_group": "hold_macro_mt",
+    "turn_index": 2,
+    "prompt": "Still filtering to those same observations (year < 1980), what is the maximum tbilrate?",
+    "assertion": {
+      "op": "filtered_agg",
+      "filters": [
+        [
+          "year",
+          "<",
+          1980
+        ]
+      ],
+      "metric": "tbilrate",
+      "agg": "max"
+    }
+  },
+  {
+    "id": "hold_co2_01_missing",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "missing_values",
+    "thread_group": "hold_co2_01",
+    "turn_index": 1,
+    "prompt": "Report the exact missing value count per column in mauna_loa_co2.csv.",
+    "assertion": {
+      "op": "missing_map"
+    }
+  },
+  {
+    "id": "hold_co2_02_filter",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "filtering",
+    "thread_group": "hold_co2_02",
+    "turn_index": 1,
+    "prompt": "Filter to observations with year <= 1970; what are the row count and mean co2?",
+    "assertion": {
+      "op": "filtered_agg",
+      "filters": [
+        [
+          "year",
+          "<=",
+          1970
+        ]
+      ],
+      "metric": "co2",
+      "agg": "mean"
+    }
+  },
+  {
+    "id": "hold_co2_03_split",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "multi_step",
+    "thread_group": "hold_co2_03",
+    "turn_index": 1,
+    "prompt": "Compare the mean co2 for observations with year >= 1990 versus year < 1990.",
+    "assertion": {
+      "op": "split_means",
+      "column": "co2",
+      "split_col": "year",
+      "split_val": 1990
+    }
+  },
+  {
+    "id": "hold_co2_04_diff",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "multi_step",
+    "thread_group": "hold_co2_04",
+    "turn_index": 1,
+    "prompt": "Compute mean co2 in year 1995 vs year 1965 and report the difference (1995 mean minus 1965 mean).",
+    "assertion": {
+      "op": "group_diff",
+      "group_col": "year",
+      "metric": "co2",
+      "val_a": 1995,
+      "val_b": 1965
+    }
+  },
+  {
+    "id": "hold_co2_05_chart",
+    "dataset": "mauna_loa_co2.csv",
+    "category": "visualization",
+    "thread_group": "hold_co2_05",
+    "turn_index": 1,
+    "prompt": "Create a histogram showing the distribution of co2 values.",
+    "assertion": {
+      "op": "chart",
+      "expected_chart_kinds": [
+        "histogram"
+      ]
+    }
+  }
+]

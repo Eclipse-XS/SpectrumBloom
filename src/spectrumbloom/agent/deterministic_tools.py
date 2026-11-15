@@ -44,6 +44,26 @@ def _apply_single_filter(
     if op == "contains":
         return df[series.astype(str).str.contains(str(value), case=False, na=False)]
 
+    if op in {"in", "not_in"}:
+        if isinstance(value, (list, tuple, set)):
+            items = list(value)
+        elif isinstance(value, str):
+            raw_str = value.strip().strip("[]()")
+            items = [p.strip().strip("'\"") for p in raw_str.split(",") if p.strip()]
+        else:
+            items = [value]
+        if not items:
+            raise ValueError(f"Filter operator '{op}' requires a non-empty list of values.")
+        if pd.api.types.is_numeric_dtype(series):
+            try:
+                num_items = [float(item) for item in items]
+                mask = pd.to_numeric(series, errors="coerce").isin(num_items)
+            except (TypeError, ValueError):
+                mask = series.astype(str).isin([str(item) for item in items])
+        else:
+            mask = series.astype(str).isin([str(item) for item in items])
+        return df[mask.fillna(False)] if op == "in" else df[(~mask).fillna(False)]
+
     if op in {">", ">=", "<", "<="}:
         num_series = pd.to_numeric(series, errors="coerce")
         try:
@@ -97,6 +117,20 @@ def run_aggregate_data(
     limit: int = 20,
 ) -> dict[str, Any]:
     """Validate columns/dtypes and execute deterministic filtering and aggregation."""
+    filters_applied: list[str] = []
+    if filter_column and filter_op:
+        resolved_f1 = _validate_column(df, filter_column)
+        filters_applied.append(
+            f"{resolved_f1} {filter_op}"
+            + ("" if filter_op in {"isna", "notna"} else f" {filter_value!r}")
+        )
+    if filter2_column and filter2_op:
+        resolved_f2 = _validate_column(df, filter2_column)
+        filters_applied.append(
+            f"{resolved_f2} {filter2_op}"
+            + ("" if filter2_op in {"isna", "notna"} else f" {filter2_value!r}")
+        )
+
     work = _apply_single_filter(df, filter_column, filter_op, filter_value)
     work = _apply_single_filter(work, filter2_column, filter2_op, filter2_value)
 
@@ -116,9 +150,15 @@ def run_aggregate_data(
         valid_mask = coerced.notna()
         nulls_excluded = int((~valid_mask).sum())
         if valid_mask.sum() == 0:
+            if len(work) == 0 and filter_column and filter2_column:
+                raise ValueError(
+                    f"No rows matched combined AND filters {filters_applied}. "
+                    "Note: filter and filter2 combine with logical AND; to compare two disjoint "
+                    "subsets (e.g., X >= T vs X < T), invoke aggregate_data TWICE separately."
+                )
             raise ValueError(
                 f"Column '{metric_col}' contains no numeric values for '{agg_func}' "
-                f"(after filtering {len(work)} rows)."
+                f"(after filtering {len(work)} rows, filters={filters_applied})."
             )
         calc_df = work.loc[valid_mask].copy()
         calc_df[metric_col] = coerced.loc[valid_mask]
@@ -130,6 +170,8 @@ def run_aggregate_data(
     if rows_matched == 0:
         return {
             "rows_matched": 0,
+            "total_dataset_rows": int(len(df)),
+            "filters_applied": filters_applied,
             "nulls_excluded": 0,
             "agg_func": agg_func,
             "metric_column": metric_col,
@@ -150,6 +192,8 @@ def run_aggregate_data(
         return sanitize_json_payload(
             {
                 "rows_matched": rows_matched,
+                "total_dataset_rows": int(len(df)),
+                "filters_applied": filters_applied,
                 "nulls_excluded": nulls_excluded,
                 "agg_func": agg_func,
                 "metric_column": metric_col,
@@ -170,7 +214,7 @@ def run_aggregate_data(
     res_df = series.reset_index(name="value")
     if pd.api.types.is_float_dtype(res_df["value"]):
         res_df["value"] = res_df["value"].round(6)
-    res_df = res_df.sort_values("value", ascending=not sort_desc).head(max(1, min(limit, 50)))
+    res_df = res_df.sort_values("value", ascending=not sort_desc).head(max(1, min(limit, 100)))
 
     groups_list = res_df.to_dict(orient="records")
     mapping = (
@@ -181,6 +225,8 @@ def run_aggregate_data(
     return sanitize_json_payload(
         {
             "rows_matched": rows_matched,
+            "total_dataset_rows": int(len(df)),
+            "filters_applied": filters_applied,
             "nulls_excluded": nulls_excluded,
             "agg_func": agg_func,
             "metric_column": metric_col,
@@ -202,7 +248,25 @@ def run_statistical_test(
 ) -> dict[str, Any]:
     """Execute deterministic, assumptions-checked bivariate tests or univariate diagnostics."""
     col_a = _validate_column(df, column_a)
-    col_b = _validate_column(df, column_b) if column_b else None
+    inferred_col_b = column_b
+    if not inferred_col_b and test_type in {"kruskal", "anova", "mannwhitney"}:
+        # Handle LLMs accidentally placing the grouping column name in `group_a`
+        if group_a and not group_b and group_a in df.columns and group_a != col_a:
+            inferred_col_b = group_a
+            group_a = None
+        # Or infer unambiguous grouping column containing both named group labels
+        elif group_a is not None and group_b is not None:
+            pair_labels = {str(group_a), str(group_b)}
+            matches = [
+                str(c)
+                for c in df.columns
+                if str(c) != col_a
+                and not pd.api.types.is_float_dtype(df[c])
+                and pair_labels.issubset({str(v) for v in df[c].dropna().unique()[:50]})
+            ]
+            if len(matches) == 1:
+                inferred_col_b = matches[0]
+    col_b = _validate_column(df, inferred_col_b) if inferred_col_b else None
 
     if test_type in {"pearson", "spearman"}:
         if col_b is None:
@@ -410,6 +474,7 @@ def format_statistical_focus(
                 "filename": profile.filename,
                 "rows": profile.rows,
                 "columns": profile.columns,
+                "total_missing_cells": report.missingness.total_missing_cells,
                 "duplicate_rows": profile.duplicate_rows,
                 "completeness_pct": profile.completeness_pct,
                 "warnings": profile.warnings,

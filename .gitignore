@@ -30,6 +30,12 @@ mlruns/
 .mypy_cache/
 .coverage
 htmlcov/
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
 
 # IDEs & OS
 .vscode/

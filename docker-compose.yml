@@ -17,7 +17,7 @@ services:
         condition: service_completed_successfully
     environment:
       SANDBOX_DOCKER_IMAGE: spectrumbloom-sandbox:latest
-      SANDBOX_EXECUTOR_TOKEN: ${SANDBOX_EXECUTOR_TOKEN:-local-compose-sandbox-executor-secret-token}
+      SANDBOX_EXECUTOR_TOKEN: ${SANDBOX_EXECUTOR_TOKEN:?Set SANDBOX_EXECUTOR_TOKEN (>=16 random chars) in .env before running Docker Compose}
     volumes:
       # Isolated internal execution boundary only; never mounted into the API or UI containers.
       - /var/run/docker.sock:/var/run/docker.sock
@@ -41,17 +41,17 @@ services:
     environment:
       APP_ENV: development
       API_HOST: 0.0.0.0
-      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-local-compose-api-auth-secret-token}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?Set API_AUTH_TOKEN (>=16 random chars) in .env before running Docker Compose}
       SANDBOX_BACKEND: ${COMPOSE_SANDBOX_BACKEND:-remote}
       SANDBOX_EXECUTOR_URL: http://sandbox-executor:9100
-      SANDBOX_EXECUTOR_TOKEN: ${SANDBOX_EXECUTOR_TOKEN:-local-compose-sandbox-executor-secret-token}
+      SANDBOX_EXECUTOR_TOKEN: ${SANDBOX_EXECUTOR_TOKEN:?Set SANDBOX_EXECUTOR_TOKEN (>=16 random chars) in .env before running Docker Compose}
       OLLAMA_BASE_URL: ${COMPOSE_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       LLAMACPP_BASE_URL: ${COMPOSE_LLAMACPP_BASE_URL:-http://host.docker.internal:8080/v1}
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       LLM_MODEL: ${LLM_MODEL:-qwen3:4b-instruct}
       REDIS_URL: ${REDIS_URL:-}
       LOCAL_DATASET_DIR: /app/data/datasets
-      CORS_ALLOW_ORIGINS: http://localhost:8501,http://127.0.0.1:8501
+      CORS_ALLOW_ORIGINS: http://localhost:8501,http://127.0.0.1:8501,http://localhost:4200,http://127.0.0.1:4200
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -68,16 +68,41 @@ services:
       - ALL
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: spectrumbloom-frontend
+    ports:
+      - "127.0.0.1:8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8501/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - app_net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
   ui:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: spectrumbloom-ui
+    container_name: spectrumbloom-legacy-ui
+    profiles: ["legacy-ui"]
     ports:
-      - "127.0.0.1:8501:8501"
+      - "127.0.0.1:8502:8501"
     environment:
       SPECTRUMBLOOM_API_URL: http://api:8000
-      SPECTRUMBLOOM_DEFAULT_API_TOKEN: ${API_AUTH_TOKEN:-local-compose-api-auth-secret-token}
+      SPECTRUMBLOOM_DEFAULT_API_TOKEN: ${API_AUTH_TOKEN:?Set API_AUTH_TOKEN (>=16 random chars) in .env before running Docker Compose}
     command:
       [
         "streamlit",

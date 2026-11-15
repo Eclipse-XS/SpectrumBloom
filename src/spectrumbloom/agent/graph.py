@@ -52,6 +52,34 @@ _ANY_IMAGE_MD_RE = re.compile(r"!\[[^\]]*\]\([^\)]+\)\s*")
 _TOOL_CALL_TAG_RE = re.compile(r"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>", re.IGNORECASE)
 _JSON_FENCE_RE = re.compile(r"```json\s*\n(\{[\s\S]*?\})\s*\n```", re.IGNORECASE)
 _PY_FENCE_RE = re.compile(r"```(?:python|py)\s*\n([\s\S]*?)\n```", re.IGNORECASE)
+_REPEAT_QUERY_RE = re.compile(
+    r"\b(?:repeat|restate|echo|say that again|previous figure)\b",
+    re.IGNORECASE,
+)
+_PROFILE_QUERY_RE = re.compile(
+    r"\b(?:profile|shape|missing|nulls?|nan|duplicates?|overview|row count|column count)\b",
+    re.IGNORECASE,
+)
+_DATASET_CALC_RE = re.compile(
+    r"\b(?:"
+    r"mean|average|avg|median|std|standard deviation|variance|sum|total|count|rows?|columns?|"
+    r"min(?:imum)?|max(?:imum)?|quantile|percentile|missing|nulls?|nan|duplicates?|"
+    r"correlat\w*|p[- ]?value|t[- ]?test|anova|mann[- ]?whitney|kruskal|"
+    r"chi[- ]?square|pearson|spearman|"
+    r"profile|summar(?:y|ize)|distribut\w*|histogram|scatter|bar chart|box ?plot|"
+    r"heatmap|line chart|"
+    r"chart|plot|visualiz\w*|group|filter|subset|compar\w*|highest|lowest|largest|smallest|"
+    r"top|bottom|ratio|difference|percent(?:age)?|"
+    r"still filtering|instead of|follow[- ]?up|that group|that region|those records|that subset"
+    r")\b",
+    re.IGNORECASE,
+)
+_INVALID_COL_ANSWER_RE = re.compile(
+    r"\b(?:does not exist|not exist|not found|not in the dataset|"
+    r"no such column|invalid column|unknown column)\b",
+    re.IGNORECASE,
+)
+_NUM_TOKEN_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
 
 
 def normalize_text(content: Any) -> str:
@@ -145,6 +173,161 @@ def extract_tool_calls_with_fallback(message: BaseMessage) -> list[dict[str, Any
     return []
 
 
+def _extract_numeric_tokens(text: str) -> list[str]:
+    return [tok.replace(",", "").lstrip("+") for tok in _NUM_TOKEN_RE.findall(text or "")]
+
+
+def _requires_tool_execution(
+    query: str,
+    answer_text: str,
+    prior_ai_texts: list[str],
+) -> bool:
+    """Return True if a data/profile answer bypassed tool execution."""
+    if _PROFILE_QUERY_RE.search(query):
+        return True
+
+    answer_nums = _extract_numeric_tokens(answer_text)
+    if _REPEAT_QUERY_RE.search(query):
+        prior_nums = set(_extract_numeric_tokens("\n".join(prior_ai_texts)))
+        if not answer_nums or all(n in prior_nums for n in answer_nums):
+            return False
+
+    if _INVALID_COL_ANSWER_RE.search(answer_text) and not answer_nums:
+        return False
+
+    if answer_nums:
+        return True
+
+    return bool(_DATASET_CALC_RE.search(query))
+
+
+def _format_boundary_regex(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        num = float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+    if num.is_integer():
+        return rf"{int(num)}(?:\.0+)?"
+    return re.escape(f"{num:g}")
+
+
+def _check_filter_operator_fidelity(query: str, args: dict[str, Any]) -> str | None:
+    """Catch dropped equality (`>` vs `>=`, `<` vs `<=`) on explicit numeric boundary filters."""
+    if not query:
+        return None
+
+    for col_k, op_k, val_k in (
+        ("filter_column", "filter_op", "filter_value"),
+        ("filter2_column", "filter2_op", "filter2_value"),
+    ):
+        col = args.get(col_k)
+        op = str(args.get(op_k) or "").strip()
+        val = args.get(val_k)
+        if not col or op not in {">", "<"}:
+            continue
+        num_pat = _format_boundary_regex(val)
+        if not num_pat:
+            continue
+
+        col_words = re.escape(str(col)).replace(r"_", r"[\s_]+")
+        if op == ">":
+            strict_pat = rf"\b{col_words}\b[^\n,;.]{{0,24}}?(?<![<>!=])>(?!=)\s*{num_pat}\b"
+            incl_op = r"(?:>=|≥|at least|no less than|on or after)"
+            incl_pat = rf"\b{col_words}\b[^\n,;.]{{0,24}}?{incl_op}\s*{num_pat}\b"
+            expected_op = ">="
+        else:
+            strict_pat = rf"\b{col_words}\b[^\n,;.]{{0,24}}?(?<![<>!=])<(?!=)\s*{num_pat}\b"
+            incl_op = r"(?:<=|≤|at most|no more than|on or before)"
+            incl_pat = rf"\b{col_words}\b[^\n,;.]{{0,24}}?{incl_op}\s*{num_pat}\b"
+            expected_op = "<="
+
+        if re.search(incl_pat, query, re.IGNORECASE) and not re.search(
+            strict_pat, query, re.IGNORECASE
+        ):
+            return (
+                f"Filter operator mismatch in {op_k}: the query specifies an inclusive boundary "
+                f"('{expected_op}' for '{col}' at {val}), not strict '{op}'. "
+                f"Re-run aggregate_data with {op_k}='{expected_op}'."
+            )
+    return None
+
+
+def _check_spurious_filter(
+    messages: list[BaseMessage],
+    active_query: str,
+    args: dict[str, Any],
+) -> str | None:
+    """Reject hallucinated row filters (from example profile values) never requested in chat."""
+    conv_parts: list[str] = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            conv_parts.append(normalize_text(msg.content))
+        elif isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
+            conv_parts.append(normalize_text(msg.content))
+    conv_low = re.sub(r"[^a-z0-9]+", " ", " ".join(conv_parts).lower())
+    active_low = (active_query or "").lower()
+
+    generic_tokens = {
+        "mean",
+        "total",
+        "rate",
+        "score",
+        "value",
+        "count",
+        "type",
+        "name",
+        "date",
+        "time",
+        "year",
+    }
+
+    for col_k, op_k, val_k in (
+        ("filter_column", "filter_op", "filter_value"),
+        ("filter2_column", "filter2_op", "filter2_value"),
+    ):
+        col = args.get(col_k)
+        op = str(args.get(op_k) or "").strip().lower()
+        val = args.get(val_k)
+        if not col:
+            continue
+
+        col_norm = re.sub(r"[^a-z0-9]+", " ", str(col).lower()).strip()
+        col_mentioned = bool(col_norm and col_norm in conv_low)
+        if not col_mentioned:
+            for tok in col_norm.split():
+                if len(tok) >= 4 and tok not in generic_tokens and tok in conv_low:
+                    col_mentioned = True
+                    break
+
+        vals_to_check = val if isinstance(val, (list, tuple, set)) else [val]
+        val_mentioned = False
+        for item in vals_to_check:
+            if item is None:
+                continue
+            item_norm = re.sub(r"[^a-z0-9]+", " ", str(item).lower()).strip()
+            if len(item_norm) >= 2 and re.search(rf"\b{re.escape(item_norm)}\b", conv_low):
+                val_mentioned = True
+                break
+
+        null_filter_requested = op in {"isna", "notna"} and bool(
+            re.search(
+                r"\b(?:null|na|nan|missing|incomplete|non[- ]?null|valid|exclude|drop)\b",
+                active_low,
+            )
+        )
+
+        if not (col_mentioned or val_mentioned or null_filter_requested):
+            return (
+                f"Spurious filter rejected ({col_k}='{col}', {op_k}='{op}'): neither '{col}' "
+                "nor those filter values were requested by the user. Re-run `aggregate_data` on "
+                "the full dataset with `filter_column=None, filter_op=None, filter_value=None` "
+                "(and `filter2_*=None`)."
+            )
+    return None
+
+
 class EDAAgentGraph:
     """Compiled LangGraph agent orchestrating sandboxed code execution, stats, and ML tools."""
 
@@ -161,6 +344,7 @@ class EDAAgentGraph:
     ) -> None:
         self.sandbox = sandbox
         self.allow_python_repl = sandbox.backend_name != "disabled"
+        self.chat_model = chat_model
         self.tools = get_agent_tools(include_python_repl=self.allow_python_repl)
         self.model_with_tools = chat_model.bind_tools(self.tools)
         self.df_provider = df_provider
@@ -217,7 +401,15 @@ class EDAAgentGraph:
                     pending_human = None
 
         # Keep at most the last 2 completed Q/A pairs (~4 messages) plus full active turn
-        return [*prior_qa[-4:], *messages[last_human_idx:]]
+        return [
+            *[
+                HumanMessage(content=normalize_text(m.content))
+                if isinstance(m, HumanMessage)
+                else AIMessage(content=normalize_text(m.content)[:400])
+                for m in prior_qa[-2:]
+            ],
+            *messages[last_human_idx:],
+        ]
 
     def _agent_node(self, state: EDAGraphState) -> dict[str, Any]:
         messages = list(state.get("messages", []))
@@ -230,6 +422,21 @@ class EDAAgentGraph:
         filtered = [m for m in messages if not isinstance(m, SystemMessage)]
         compacted = self._compact_history(filtered)
         prompt_messages = [SystemMessage(content=system_prompt), *compacted]
+
+        # Extract active query & prior AI texts for tool-requirement gating
+        last_human_idx = -1
+        for idx in range(len(filtered) - 1, -1, -1):
+            if isinstance(filtered[idx], HumanMessage):
+                last_human_idx = idx
+                break
+        active_query = (
+            normalize_text(filtered[last_human_idx].content) if last_human_idx >= 0 else ""
+        )
+        prior_ai_texts = [
+            normalize_text(m.content)
+            for m in (filtered[:last_human_idx] if last_human_idx > 0 else [])
+            if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None)
+        ]
 
         # If previous tool step failed, inject concise repair guidance
         last_error = state.get("last_error")
@@ -246,6 +453,22 @@ class EDAAgentGraph:
                 )
             )
 
+        if state.get("step_count", 0) >= MAX_TOOL_STEPS:
+            synthesis_prompt = [
+                *prompt_messages,
+                HumanMessage(
+                    content=(
+                        "Tool budget reached. Provide your concise final answer directly "
+                        "using ONLY the exact tool outputs already computed above."
+                    )
+                ),
+            ]
+            response = self.chat_model.invoke(synthesis_prompt)
+            return {
+                "messages": [AIMessage(content=normalize_text(getattr(response, "content", "")))],
+                "last_error": None,
+            }
+
         response = self.model_with_tools.invoke(prompt_messages)
 
         # Ensure fallback tool calls get attached as structured tool_calls if missing,
@@ -257,6 +480,37 @@ class EDAAgentGraph:
                     content=normalize_text(getattr(response, "content", "")),
                     tool_calls=extracted,
                 )
+
+        # Enforce tool execution when the model tries to answer analytical/follow-up/profile
+        # questions directly from prior text or memory without running a tool this turn.
+        turn_traces = state.get("tool_traces") or []
+        if not getattr(response, "tool_calls", None) and not turn_traces and not last_error:
+            draft_text = normalize_text(getattr(response, "content", ""))
+            if _requires_tool_execution(active_query, draft_text, prior_ai_texts):
+                nudge_messages = [
+                    *prompt_messages,
+                    AIMessage(content=draft_text or ""),
+                    HumanMessage(
+                        content=(
+                            "You have not called any tool for the current question yet. "
+                            "Never answer dataset calculations, filtered counts, or follow-up "
+                            "metrics (or statistical tests, charts, missing values, and "
+                            "duplicate counts) from memory or prior turns. Call the appropriate "
+                            "tool (`aggregate_data`, `compute_statistical_test`, "
+                            "`get_statistical_summary`, `create_standard_chart`, or "
+                            "`python_repl`) right now."
+                        )
+                    ),
+                ]
+                retry_resp = self.model_with_tools.invoke(nudge_messages)
+                if not getattr(retry_resp, "tool_calls", None):
+                    retry_extracted = extract_tool_calls_with_fallback(retry_resp)
+                    if retry_extracted:
+                        retry_resp = AIMessage(
+                            content=normalize_text(getattr(retry_resp, "content", "")),
+                            tool_calls=retry_extracted,
+                        )
+                response = retry_resp
 
         return {
             "messages": [response],
@@ -276,8 +530,6 @@ class EDAAgentGraph:
 
     def _route_after_tools(self, state: EDAGraphState) -> str:
         if state.get("terminal_error"):
-            return "finalize"
-        if state.get("step_count", 0) >= MAX_TOOL_STEPS:
             return "finalize"
         if state.get("retries", 0) > MAX_REPAIR_RETRIES and state.get("last_error"):
             return "finalize"
@@ -403,6 +655,11 @@ class EDAAgentGraph:
         timed_out = bool(state.get("timed_out", False))
 
         df = self.df_provider()
+        active_query = ""
+        for msg in reversed(state.get("messages", [])):
+            if isinstance(msg, HumanMessage):
+                active_query = normalize_text(msg.content)
+                break
 
         for tc in tool_calls:
             step_count += 1
@@ -447,29 +704,43 @@ class EDAAgentGraph:
                 retries += 1
                 last_error = error_msg
             else:
-                (
-                    stdout,
-                    result_val,
-                    figs,
-                    error_msg,
-                    term_err,
-                    call_timed_out,
-                    count_retry,
-                ) = self._execute_tool_call(name, args, df)
-                if term_err:
-                    terminal_error = term_err
-                if call_timed_out:
-                    timed_out = True
-                if error_msg:
-                    if count_retry:
-                        retries += 1
+                op_fidelity_err = (
+                    _check_filter_operator_fidelity(active_query, args)
+                    or _check_spurious_filter(state.get("messages", []), active_query, args)
+                    if name == "aggregate_data"
+                    else None
+                )
+                if op_fidelity_err:
+                    stdout, result_val, figs = "", None, []
+                    error_msg = op_fidelity_err
+                    retries += 1
                     last_error = error_msg
                     seen_sigs.add(err_sig)
                     new_sigs.append(err_sig)
                 else:
-                    last_error = None
-                    seen_sigs.add(ok_sig)
-                    new_sigs.append(ok_sig)
+                    (
+                        stdout,
+                        result_val,
+                        figs,
+                        error_msg,
+                        term_err,
+                        call_timed_out,
+                        count_retry,
+                    ) = self._execute_tool_call(name, args, df)
+                    if term_err:
+                        terminal_error = term_err
+                    if call_timed_out:
+                        timed_out = True
+                    if error_msg:
+                        if count_retry:
+                            retries += 1
+                        last_error = error_msg
+                        seen_sigs.add(err_sig)
+                        new_sigs.append(err_sig)
+                    else:
+                        last_error = None
+                        seen_sigs.add(ok_sig)
+                        new_sigs.append(ok_sig)
 
             duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
             new_figures.extend(figs)
@@ -503,8 +774,8 @@ class EDAAgentGraph:
                 parts.append(f"ERROR:\n{error_msg}")
 
             content = "\n\n".join(parts) if parts else "Execution completed with no output."
-            if len(content) > 2200:
-                content = f"{content[:2150]}\n...[truncated for context budget]"
+            if len(content) > 1600:
+                content = f"{content[:1550]}\n...[truncated for context budget]"
             tool_messages.append(ToolMessage(content=content, tool_call_id=tc_id, name=name))
 
         return {

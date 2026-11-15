@@ -196,6 +196,10 @@ def create_app(
                     },
                     "sandbox_backend": sandbox.backend_name,
                     "sandbox_dynamic_python_enabled": sandbox.backend_name != "disabled",
+                    "auth_required": bool(cfg.api_auth_token.strip()),
+                    "max_upload_mb": cfg.max_upload_mb,
+                    "default_provider": cfg.llm_provider,
+                    "default_model": cfg.llm_model,
                     "llm": llm_status,
                     "observability": {
                         "opentelemetry": True,

@@ -29,6 +29,13 @@ from spectrumbloom.main import create_app
 from spectrumbloom.services.session_service import SpectrumBloomService
 
 _NUM_TOKEN_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?")
+_STAT_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
+    "mean": ("mean", "average", "avg"),
+    "median": ("median",),
+    "max": ("max", "maximum", "highest"),
+    "min": ("min", "minimum", "lowest"),
+    "std": ("std", "standard deviation", "stdev"),
+}
 
 
 def _extract_numbers_from_text(text: str) -> list[float]:
@@ -61,6 +68,99 @@ def _text_matches_number(
     return False
 
 
+def _strip_markdown(text: str) -> str:
+    return re.sub(r"[*`]+|(?<!\w)_+|_+(?!\w)", "", text)
+
+
+def _split_clauses_preserving_intro(segment: str) -> list[str]:
+    """Split comparative clauses while keeping 'For West, mean age is 43.15' together."""
+    pieces: list[str] = []
+    start = 0
+    for match in re.finditer(r",\s+|\s+and\s+", segment, flags=re.IGNORECASE):
+        left = segment[start : match.start()]
+        right = segment[match.end() :].lstrip()
+        # Keep anaphoric main clauses ('for quarters with year >= 2000, it is 5.415') intact.
+        if re.search(
+            r"^(?:it|they|this|that|there|which|where|respectively|the\s+(?:mean|median|sum|total|value|rate|count))\b",
+            right,
+            flags=re.IGNORECASE,
+        ):
+            continue
+        if re.search(r"\d|[:=]", left):
+            pieces.append(left.strip())
+            start = match.end()
+    tail = segment[start:].strip()
+    if tail:
+        pieces.append(tail)
+    return [p for p in pieces if p]
+
+
+def _split_answer_segments(answer: str) -> list[str]:
+    """Split answer into local entity-value segments including indented Markdown lists."""
+    segments: list[str] = []
+    current_header = ""
+    for raw_line in answer.splitlines():
+        clean = _strip_markdown(raw_line).strip()
+        if not clean:
+            current_header = ""
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip(" \t"))
+        if clean.startswith("|") and "|" in clean[1:]:
+            segments.append(clean)
+            current_header = ""
+            continue
+
+        is_heading = clean.startswith("#") or (
+            indent == 0 and clean.endswith(":") and len(clean) < 120
+        )
+        if indent == 0:
+            current_header = clean.lstrip("#").strip() if is_heading else ""
+
+        effective_line = (
+            f"{current_header} {clean}".strip() if (indent > 0 and current_header) else clean
+        )
+        coarse_parts = re.split(
+            r";+|(?<!\d)\.(?!\d)(?:\s+|$)|"
+            r"\b(?:whereas|while|compared to|compared with|versus|vs\.?)\b",
+            effective_line,
+            flags=re.IGNORECASE,
+        )
+        for part in coarse_parts:
+            stripped = part.strip()
+            if not stripped:
+                continue
+            clauses = _split_clauses_preserving_intro(stripped)
+            segments.extend(clauses)
+    return segments
+
+
+def _entity_in_text(text: str, entity: str) -> bool:
+    clean = _strip_markdown(text).lower()
+    target = entity.strip().lower()
+    if not target:
+        return False
+    return bool(re.search(rf"(?<![a-z0-9_]){re.escape(target)}(?![a-z0-9_])", clean))
+
+
+def _text_associates_entity_with_number(
+    answer: str,
+    entity: str,
+    expected: float | int,
+    *,
+    rel_tol: float = 0.005,
+    abs_tol: float = 0.05,
+    aliases: tuple[str, ...] | None = None,
+) -> bool:
+    """Verify that `expected` appears in the same local clause/row/list-item as `entity`."""
+    candidates = (entity, *(aliases or ()))
+    for seg in _split_answer_segments(answer):
+        if any(_entity_in_text(seg, name) for name in candidates) and _text_matches_number(
+            seg, expected, rel_tol=rel_tol, abs_tol=abs_tol
+        ):
+            return True
+    return False
+
+
 def _apply_filters(df: pd.DataFrame, filters: list[list[Any]]) -> pd.DataFrame:
     work = df
     for col, op, val in filters:
@@ -89,28 +189,26 @@ def _verify_task_against_ground_truth(
     answer: str,
     status: str,
     figures: list[dict[str, Any]],
-    traces: list[dict[str, Any]],
-    evaluation: dict[str, Any],
+    _traces: list[dict[str, Any]] | None = None,
+    evaluation: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
-    """Deterministically verify correctness against exact pandas/scipy calculations."""
+    """Deterministically verify FINAL ANSWER correctness strictly from answer & figures alone.
+
+    Never reads tool traces (`stdout`/`result`) to rescue omitted or wrong final answers.
+    """
     spec = task["assertion"]
     op = spec["op"]
-    ans_lower = answer.lower()
-    trace_blob = " ".join(
-        f"{t.get('stdout', '')} {json.dumps(t.get('result'), default=str)}"
-        for t in traces
-        if not t.get("error")
-    )
-    combined_text = f"{answer}\n{trace_blob}"
+    ans_clean = _strip_markdown(answer)
+    ans_lower = ans_clean.lower()
+    eval_meta = evaluation or {}
 
-    if not evaluation.get("no_leaked_think_tags", True):
+    if not eval_meta.get("no_leaked_think_tags", True):
         return False, "leaked_think_tags"
-    if not evaluation.get("no_fabricated_chart_ref", True):
+    if not eval_meta.get("no_fabricated_chart_ref", True):
         return False, "fabricated_chart_reference"
 
     if op == "missing_column_handled":
         bad_col = str(spec["bad_column"]).lower()
-        had_tool_error = any(bool(t.get("error")) for t in traces)
         err_markers = (
             "not found",
             "does not exist",
@@ -127,42 +225,25 @@ def _verify_task_against_ground_truth(
             "unknown column",
         )
         explained = any(m in ans_lower for m in err_markers) or bad_col in ans_lower
-        if explained and (had_tool_error or status == "failed" or not traces):
+        if explained:
             return True, "ok_error_handled"
-        return False, f"unhandled_missing_column(had_tool_error={had_tool_error},status={status})"
+        return False, f"unhandled_missing_column(status={status})"
 
     if status != "success":
         return False, f"status_failed:{status}"
-    if evaluation.get("figure_validity_rate", 1.0) != 1.0:
+    if eval_meta.get("figure_validity_rate", 1.0) != 1.0:
         return False, "invalid_figure_spec"
-
-    requires_tool_ops = {
-        "filtered_count",
-        "filtered_agg",
-        "groupby_top",
-        "groupby_bottom",
-        "top_group_metric",
-        "bottom_group_metric",
-        "groupby_all",
-        "corr",
-        "outliers_iqr",
-        "group_test",
-        "normality",
-        "group_ratio",
-        "group_diff",
-        "split_means",
-        "chart",
-    }
-    if op in requires_tool_ops and not any(not t.get("error") for t in traces):
-        return False, "no_successful_tool_execution"
 
     if op == "shape_and_dups":
         rows, cols = df.shape
         dups = int(df.duplicated().sum())
         ok = (
-            _text_matches_number(combined_text, rows, rel_tol=0.0, abs_tol=0.5)
-            and _text_matches_number(combined_text, cols, rel_tol=0.0, abs_tol=0.5)
-            and _text_matches_number(combined_text, dups, rel_tol=0.0, abs_tol=0.5)
+            _text_matches_number(ans_clean, rows, rel_tol=0.0, abs_tol=0.5)
+            and _text_matches_number(ans_clean, cols, rel_tol=0.0, abs_tol=0.5)
+            and (
+                _text_matches_number(ans_clean, dups, rel_tol=0.0, abs_tol=0.5)
+                or (dups == 0 and ("no duplicate" in ans_lower or "zero duplicate" in ans_lower))
+            )
         )
         return ok, "ok" if ok else f"expected rows={rows}, cols={cols}, dups={dups}"
 
@@ -170,10 +251,10 @@ def _verify_task_against_ground_truth(
         rows, cols = df.shape
         miss = int(df.isna().sum().sum())
         ok = (
-            _text_matches_number(combined_text, rows, rel_tol=0.0, abs_tol=0.5)
-            and _text_matches_number(combined_text, cols, rel_tol=0.0, abs_tol=0.5)
+            _text_matches_number(ans_clean, rows, rel_tol=0.0, abs_tol=0.5)
+            and _text_matches_number(ans_clean, cols, rel_tol=0.0, abs_tol=0.5)
             and (
-                _text_matches_number(combined_text, miss, rel_tol=0.0, abs_tol=0.5)
+                _text_matches_number(ans_clean, miss, rel_tol=0.0, abs_tol=0.5)
                 or (miss == 0 and ("no missing" in ans_lower or "zero missing" in ans_lower))
             )
         )
@@ -183,29 +264,31 @@ def _verify_task_against_ground_truth(
         nulls = df.isna().sum()
         missing_cols = {str(k): int(v) for k, v in nulls.items() if int(v) > 0}
         for col_name, cnt in missing_cols.items():
-            if col_name.lower() not in ans_lower:
+            if not _entity_in_text(ans_clean, col_name):
                 return False, f"missing_column_name:{col_name}"
-            if not _text_matches_number(combined_text, cnt, rel_tol=0.0, abs_tol=0.5):
+            if not _text_associates_entity_with_number(
+                ans_clean, col_name, cnt, rel_tol=0.0, abs_tol=0.5
+            ):
                 return False, f"missing_count_mismatch:{col_name}={cnt}"
         return True, "ok"
 
     if op == "col_null_count":
         col = spec["column"]
         cnt = int(df[col].isna().sum())
-        ok = _text_matches_number(combined_text, cnt, rel_tol=0.0, abs_tol=0.5)
+        ok = _text_matches_number(ans_clean, cnt, rel_tol=0.0, abs_tol=0.5)
         return ok, "ok" if ok else f"expected {col}_nulls={cnt}"
 
     if op == "filtered_count":
         sub = _apply_filters(df, spec["filters"])
         cnt = int(len(sub))
-        ok = _text_matches_number(combined_text, cnt, rel_tol=0.0, abs_tol=0.5)
+        ok = _text_matches_number(ans_clean, cnt, rel_tol=0.0, abs_tol=0.5)
         return ok, "ok" if ok else f"expected count={cnt}"
 
     if op == "filtered_agg":
         sub = _apply_filters(df, spec["filters"])
         series_num = pd.to_numeric(sub[spec["metric"]], errors="coerce").dropna()
         val = float(getattr(series_num, spec["agg"])())
-        ok = _text_matches_number(combined_text, val, rel_tol=0.005, abs_tol=0.05)
+        ok = _text_matches_number(ans_clean, val, rel_tol=0.005, abs_tol=0.05)
         return ok, "ok" if ok else f"expected {spec['agg']}={round(val, 4)}"
 
     if op in {"groupby_top", "groupby_bottom"}:
@@ -217,9 +300,11 @@ def _verify_task_against_ground_truth(
         else:
             target_label = str(agg_series.idxmin())
             target_val = float(agg_series.min())
-        has_label = target_label.lower() in ans_lower
-        has_val = _text_matches_number(combined_text, target_val, rel_tol=0.005, abs_tol=0.05)
-        ok = has_label and has_val
+        if not _entity_in_text(ans_clean, target_label):
+            return False, f"expected label={target_label}, val={round(target_val, 3)}"
+        ok = _text_associates_entity_with_number(
+            ans_clean, target_label, target_val, rel_tol=0.005, abs_tol=0.05
+        )
         return ok, "ok" if ok else f"expected label={target_label}, val={round(target_val, 3)}"
 
     if op in {"top_group_metric", "bottom_group_metric"}:
@@ -233,24 +318,46 @@ def _verify_task_against_ground_truth(
         sub = df[df[spec["group_by"]] == winner]
         target_series = pd.to_numeric(sub[spec["target_metric"]], errors="coerce").dropna()
         val = float(getattr(target_series, spec["target_agg"])())
-        ok = _text_matches_number(combined_text, val, rel_tol=0.005, abs_tol=0.05)
-        return ok, "ok" if ok else f"expected {winner}.{spec['target_metric']}={round(val, 3)}"
+        winner_str = str(winner)
+        if _entity_in_text(ans_clean, winner_str):
+            ok = _text_associates_entity_with_number(
+                ans_clean, winner_str, val, rel_tol=0.005, abs_tol=0.05
+            )
+        else:
+            return False, f"missing_winner_label:{winner_str}({round(val, 3)})"
+        return ok, "ok" if ok else f"expected {winner_str}.{spec['target_metric']}={round(val, 3)}"
 
     if op == "groupby_all":
         grouped = df.groupby(spec["group_by"], observed=True)[spec["metric"]]
         agg_series = grouped.count() if spec["agg"] == "count" else getattr(grouped, spec["agg"])()
         for label, val in agg_series.items():
-            if str(label).lower() not in ans_lower:
+            if not _entity_in_text(ans_clean, str(label)):
                 return False, f"missing_group_label:{label}"
-            if not _text_matches_number(combined_text, float(val), rel_tol=0.005, abs_tol=0.05):
+            if not _text_associates_entity_with_number(
+                ans_clean, str(label), float(val), rel_tol=0.005, abs_tol=0.05
+            ):
                 return False, f"group_val_mismatch:{label}={round(float(val), 3)}"
         return True, "ok"
 
     if op == "col_stats":
         s = pd.to_numeric(df[spec["column"]], errors="coerce").dropna()
+        multi = len(spec["metrics"]) > 1
         for metric in spec["metrics"]:
             val = float(getattr(s, metric)())
-            if not _text_matches_number(combined_text, val, rel_tol=0.005, abs_tol=0.05):
+            if multi and any(
+                _entity_in_text(ans_clean, a) for a in _STAT_METRIC_ALIASES.get(metric, (metric,))
+            ):
+                matched = _text_associates_entity_with_number(
+                    ans_clean,
+                    metric,
+                    val,
+                    rel_tol=0.005,
+                    abs_tol=0.05,
+                    aliases=_STAT_METRIC_ALIASES.get(metric, ()),
+                )
+            else:
+                matched = _text_matches_number(ans_clean, val, rel_tol=0.005, abs_tol=0.05)
+            if not matched:
                 return False, f"stat_mismatch:{spec['column']}.{metric}={round(val, 4)}"
         return True, "ok"
 
@@ -263,7 +370,7 @@ def _verify_task_against_ground_truth(
         ).dropna()
         fn = stats.pearsonr if spec["method"] == "pearson" else stats.spearmanr
         r_val = float(fn(pair["a"].to_numpy(), pair["b"].to_numpy()).statistic)
-        ok = _text_matches_number(combined_text, r_val, rel_tol=0.01, abs_tol=0.005)
+        ok = _text_matches_number(ans_clean, r_val, rel_tol=0.01, abs_tol=0.005)
         return ok, "ok" if ok else f"expected r={round(r_val, 4)}"
 
     if op == "outliers_iqr":
@@ -271,7 +378,7 @@ def _verify_task_against_ground_truth(
         q1, q3 = float(s.quantile(0.25)), float(s.quantile(0.75))
         iqr = q3 - q1
         cnt = int(((s < q1 - 1.5 * iqr) | (s > q3 + 1.5 * iqr)).sum())
-        ok = _text_matches_number(combined_text, cnt, rel_tol=0.0, abs_tol=0.5)
+        ok = _text_matches_number(ans_clean, cnt, rel_tol=0.0, abs_tol=0.5)
         return ok, "ok" if ok else f"expected iqr_outliers={cnt}"
 
     if op == "group_test":
@@ -291,39 +398,67 @@ def _verify_task_against_ground_truth(
         else:
             groups = [grp["v"].to_numpy() for _, grp in sub.groupby("g", observed=True)]
             stat_v, p_v = stats.kruskal(*groups)
-        ok = _text_matches_number(combined_text, float(p_v), rel_tol=0.02, abs_tol=0.002) or (
-            _text_matches_number(combined_text, float(stat_v), rel_tol=0.01, abs_tol=0.05)
-        )
+        has_p = _text_matches_number(ans_clean, float(p_v), rel_tol=0.02, abs_tol=0.002)
+        asks_stat = "stat" in str(task.get("prompt", "")).lower()
+        has_stat = _text_matches_number(ans_clean, float(stat_v), rel_tol=0.01, abs_tol=0.05)
+        ok = has_p and (has_stat if asks_stat else True)
         return ok, "ok" if ok else f"expected stat={round(float(stat_v), 3)}, p={float(p_v):.4g}"
 
     if op == "normality":
         s = pd.to_numeric(df[spec["column"]], errors="coerce").dropna()
         stat_v, p_v = stats.shapiro(s) if len(s) <= 5000 else stats.normaltest(s)
-        ok = _text_matches_number(combined_text, float(stat_v), rel_tol=0.01, abs_tol=0.02) and (
-            _text_matches_number(combined_text, float(p_v), rel_tol=0.02, abs_tol=0.005)
+        ok = _text_matches_number(ans_clean, float(stat_v), rel_tol=0.01, abs_tol=0.02) and (
+            _text_matches_number(ans_clean, float(p_v), rel_tol=0.02, abs_tol=0.005)
         )
         return ok, "ok" if ok else f"expected stat={round(float(stat_v), 4)}, p={float(p_v):.4g}"
 
     if op == "group_ratio":
         g = df.groupby(spec["group_by"], observed=True)[spec["metric"]].mean()
         ratio = float(g[spec["num_group"]]) / float(g[spec["den_group"]])
-        ok = _text_matches_number(combined_text, ratio, rel_tol=0.005, abs_tol=0.02)
+        ok = _text_matches_number(ans_clean, ratio, rel_tol=0.005, abs_tol=0.02)
         return ok, "ok" if ok else f"expected ratio={round(ratio, 3)}"
 
     if op == "group_diff":
         g = df.groupby(spec["group_col"], observed=True)[spec["metric"]].mean()
         diff = float(g[spec["val_a"]]) - float(g[spec["val_b"]])
-        ok = _text_matches_number(combined_text, diff, rel_tol=0.005, abs_tol=0.05)
+        ok = _text_matches_number(ans_clean, diff, rel_tol=0.005, abs_tol=0.05)
         return ok, "ok" if ok else f"expected diff={round(diff, 3)}"
 
     if op == "split_means":
         col_s = pd.to_numeric(df[spec["column"]], errors="coerce")
         sp_s = pd.to_numeric(df[spec["split_col"]], errors="coerce")
-        m_hi = float(col_s[sp_s >= float(spec["split_val"])].mean())
-        m_lo = float(col_s[sp_s < float(spec["split_val"])].mean())
-        ok = _text_matches_number(combined_text, m_hi, rel_tol=0.005, abs_tol=0.05) and (
-            _text_matches_number(combined_text, m_lo, rel_tol=0.005, abs_tol=0.05)
+        sv = float(spec["split_val"])
+        m_hi = float(col_s[sp_s >= sv].mean())
+        m_lo = float(col_s[sp_s < sv].mean())
+        segs = _split_answer_segments(ans_clean)
+        sv_str = str(int(sv)) if sv.is_integer() else str(sv)
+        hi_markers = (
+            f">= {sv_str}",
+            f">={sv_str}",
+            f"≥ {sv_str}",
+            f"≥{sv_str}",
+            "onward",
+            "at or above",
+            "or later",
         )
+        lo_markers = (
+            f"< {sv_str}",
+            f"<{sv_str}",
+            f"before {sv_str}",
+            f"prior to {sv_str}",
+            f"under {sv_str}",
+            f"below {sv_str}",
+        )
+        hi_segs = [s for s in segs if any(m in s.lower() for m in hi_markers)]
+        lo_segs = [s for s in segs if any(m in s.lower() for m in lo_markers)]
+        if hi_segs and lo_segs:
+            ok = any(
+                _text_matches_number(s, m_hi, rel_tol=0.005, abs_tol=0.05) for s in hi_segs
+            ) and any(_text_matches_number(s, m_lo, rel_tol=0.005, abs_tol=0.05) for s in lo_segs)
+        else:
+            ok = _text_matches_number(ans_clean, m_hi, rel_tol=0.005, abs_tol=0.05) and (
+                _text_matches_number(ans_clean, m_lo, rel_tol=0.005, abs_tol=0.05)
+            )
         return ok, "ok" if ok else f"expected means hi={round(m_hi, 3)}, lo={round(m_lo, 3)}"
 
     if op == "chart":
@@ -347,6 +482,42 @@ def _verify_task_against_ground_truth(
         return True, "ok"
 
     raise ValueError(f"Unsupported assertion op '{op}'.")
+
+
+def _evaluate_tool_selection(op: str, traces: list[dict[str, Any]]) -> bool:
+    """Assess whether selected tools match SpectrumBloom's deterministic-first routing rules."""
+    tools = [str(t.get("tool") or "") for t in traces]
+    if op == "missing_column_handled":
+        # Either validated/rejected by deterministic tool OR caught directly from schema
+        return True
+    if not tools:
+        return False
+    expected_map: dict[str, set[str]] = {
+        "shape_and_dups": {"get_statistical_summary"},
+        "shape_and_missing": {"get_statistical_summary"},
+        "missing_map": {"get_statistical_summary"},
+        "col_null_count": {"get_statistical_summary", "aggregate_data"},
+        "filtered_count": {"aggregate_data"},
+        "filtered_agg": {"aggregate_data"},
+        "groupby_top": {"aggregate_data"},
+        "groupby_bottom": {"aggregate_data"},
+        "top_group_metric": {"aggregate_data"},
+        "bottom_group_metric": {"aggregate_data"},
+        "groupby_all": {"aggregate_data"},
+        "col_stats": {"aggregate_data", "get_statistical_summary"},
+        "corr": {"compute_statistical_test", "get_statistical_summary"},
+        "outliers_iqr": {"compute_statistical_test", "get_statistical_summary"},
+        "group_test": {"compute_statistical_test", "get_statistical_summary"},
+        "normality": {"compute_statistical_test", "get_statistical_summary"},
+        "chart": {"create_standard_chart", "python_repl"},
+        "group_ratio": {"aggregate_data", "python_repl"},
+        "group_diff": {"aggregate_data", "python_repl"},
+        "split_means": {"aggregate_data", "python_repl"},
+    }
+    allowed = expected_map.get(op)
+    if allowed is None:
+        return True
+    return any((t in allowed) and not traces[idx].get("error") for idx, t in enumerate(tools))
 
 
 def _process_rss_mb() -> float | None:
@@ -578,22 +749,54 @@ def benchmark_model_workflow(
             ok_cnt = sum(1 for t in traces if not t.get("error"))
             total_tool_calls += len(traces)
             succeeded_tool_calls += ok_cnt
-            if task["category"] != "invalid_input":
+            is_invalid_input = task["category"] == "invalid_input"
+            if not is_invalid_input:
                 std_tool_calls += len(traces)
                 std_succeeded_tool_calls += ok_cnt
 
-            direct_profile_op = task["assertion"]["op"] in {
-                "shape_and_dups",
-                "shape_and_missing",
-                "missing_column_handled",
-            }
-            if traces or eval_dict or (direct_profile_op and status == "success"):
-                ok, reason = _verify_task_against_ground_truth(
+            op_name = task["assertion"]["op"]
+            if answer or op_name == "missing_column_handled":
+                final_answer_ok, reason = _verify_task_against_ground_truth(
                     task, df, answer, status, figures, traces, eval_dict
                 )
             else:
-                ok = False
-                reason = error_detail or "no_tool_execution_or_response"
+                final_answer_ok = False
+                reason = error_detail or "empty_response"
+
+            tool_selection_ok = _evaluate_tool_selection(op_name, traces)
+            if is_invalid_input:
+                tool_exec_ok = True
+            else:
+                tool_exec_ok = bool(traces) and (ok_cnt == len(traces))
+
+            no_think = bool(eval_dict.get("no_leaked_think_tags", True))
+            no_fake_chart = bool(eval_dict.get("no_fabricated_chart_ref", True))
+            num_ground_ratio = float(eval_dict.get("numeric_grounding_ratio", 1.0))
+            if is_invalid_input:
+                grounded_ok = no_think and no_fake_chart and num_ground_ratio >= 0.8
+            else:
+                grounded_ok = (
+                    no_think
+                    and no_fake_chart
+                    and num_ground_ratio >= 0.8
+                    and bool(eval_dict.get("passed", False))
+                )
+
+            chart_ok: bool | None = None
+            if op_name == "chart":
+                chart_ok = final_answer_ok and no_fake_chart and bool(figures)
+
+            complete_ok = (
+                final_answer_ok
+                and tool_selection_ok
+                and grounded_ok
+                and (chart_ok is not False)
+                and (
+                    is_invalid_input
+                    or (status == "success" and any(not t.get("error") for t in traces))
+                )
+            )
+            ok = complete_ok
 
             cur_rss = _process_rss_mb() or 0.0
             cur_vram = _query_nvidia_vram_mb() or 0.0
@@ -612,7 +815,14 @@ def benchmark_model_workflow(
                     "dataset": ds_name,
                     "category": task["category"],
                     "turn_index": task["turn_index"],
-                    "correct": ok,
+                    "correct": complete_ok,
+                    "final_answer_correct": final_answer_ok,
+                    "tool_execution_success": tool_exec_ok,
+                    "tool_selection_correct": tool_selection_ok,
+                    "grounded": grounded_ok,
+                    "numeric_grounding_ratio": num_ground_ratio,
+                    "chart_correct": chart_ok,
+                    "complete_task_success": complete_ok,
                     "reason": reason,
                     "status": status,
                     "timed_out": timed_out,
@@ -626,13 +836,21 @@ def benchmark_model_workflow(
                 }
             )
 
-        correct_count = sum(1 for t in per_task if t["correct"])
+        correct_count = sum(1 for t in per_task if t["complete_task_success"])
+        answer_correct_count = sum(1 for t in per_task if t["final_answer_correct"])
+        tool_sel_count = sum(1 for t in per_task if t["tool_selection_correct"])
+        grounded_count = sum(1 for t in per_task if t["grounded"])
+        std_tasks = [t for t in per_task if t["category"] != "invalid_input"]
+        std_task_exec_ok = sum(1 for t in std_tasks if t["tool_execution_success"])
+        chart_tasks = [t for t in per_task if t["chart_correct"] is not None]
+        chart_ok_count = sum(1 for t in chart_tasks if t["chart_correct"])
+
         by_category: dict[str, dict[str, Any]] = {}
         for item in per_task:
             cat = item["category"]
             bucket = by_category.setdefault(cat, {"total": 0, "passed": 0})
             bucket["total"] += 1
-            if item["correct"]:
+            if item["complete_task_success"]:
                 bucket["passed"] += 1
         for cat_stats in by_category.values():
             cat_stats["accuracy_pct"] = round(100.0 * cat_stats["passed"] / cat_stats["total"], 1)
@@ -645,6 +863,12 @@ def benchmark_model_workflow(
                 "functional_correctness_pct": round(100.0 * correct_count / len(per_task), 1)
                 if per_task
                 else 0.0,
+                "final_answer_correct_count": answer_correct_count,
+                "final_answer_correctness_pct": round(
+                    100.0 * answer_correct_count / len(per_task), 1
+                )
+                if per_task
+                else 0.0,
                 "tool_calls_total": total_tool_calls,
                 "tool_calls_succeeded": succeeded_tool_calls,
                 "tool_execution_success_pct": round(
@@ -652,11 +876,31 @@ def benchmark_model_workflow(
                 )
                 if std_tool_calls
                 else 100.0,
+                "tool_execution_task_pct": round(100.0 * std_task_exec_ok / len(std_tasks), 1)
+                if std_tasks
+                else 100.0,
                 "tool_execution_all_tasks_pct": round(
                     100.0 * succeeded_tool_calls / total_tool_calls, 1
                 )
                 if total_tool_calls
                 else 100.0,
+                "tool_selection_correct_count": tool_sel_count,
+                "tool_selection_correctness_pct": round(100.0 * tool_sel_count / len(per_task), 1)
+                if per_task
+                else 0.0,
+                "groundedness_count": grounded_count,
+                "groundedness_pct": round(100.0 * grounded_count / len(per_task), 1)
+                if per_task
+                else 0.0,
+                "chart_tasks_total": len(chart_tasks),
+                "chart_tasks_passed": chart_ok_count,
+                "chart_correctness_pct": round(100.0 * chart_ok_count / len(chart_tasks), 1)
+                if chart_tasks
+                else 100.0,
+                "complete_task_success_count": correct_count,
+                "complete_task_success_pct": round(100.0 * correct_count / len(per_task), 1)
+                if per_task
+                else 0.0,
                 "tasks_with_retries": tasks_with_retries,
                 "retry_rate_pct": round(100.0 * tasks_with_retries / len(per_task), 1)
                 if per_task
@@ -770,22 +1014,30 @@ def main() -> None:
         f"Generated: `{payload['generated_at']}` | Sandbox: `{args.sandbox_backend}` | "
         f"`num_ctx={args.num_ctx}`",
         "",
-        "| Model | Run | Correctness | Tool Exec | Retry Rate | Timeouts | "
-        "P50 (s) | P95 (s) | GPU Offload | Peak VRAM (MB) | Peak RAM (MB) |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Model | Run | Complete | Answer | Tool Exec | Tool Sel | Grounded | Chart | "
+        "Retry Rate | Timeouts | P50 (s) | P95 (s) | GPU Offload | Peak VRAM (MB) | "
+        "Peak RAM (MB) |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for mr in model_reports:
         ps = mr["ollama_ps"]
         off = f"{ps['gpu_offload_pct']}%" if ps.get("gpu_offload_pct") is not None else "n/a"
         for run in mr["runs"]:
             corr_str = (
-                f"{run['tasks_correct']}/{run['tasks_total']} "
-                f"({run['functional_correctness_pct']}%)"
+                f"{run['complete_task_success_count']}/{run['tasks_total']} "
+                f"({run['complete_task_success_pct']}%)"
+            )
+            ans_str = (
+                f"{run['final_answer_correct_count']}/{run['tasks_total']} "
+                f"({run['final_answer_correctness_pct']}%)"
             )
             md_lines.append(
-                f"| `{mr['model']}` | {run['repeat']} | {corr_str} | "
-                f"{run['tool_execution_success_pct']}% | {run['retry_rate_pct']}% | "
-                f"{run['timeout_count']} | {run['latency_p50_s']} | {run['latency_p95_s']} | "
+                f"| `{mr['model']}` | {run['repeat']} | {corr_str} | {ans_str} | "
+                f"{run['tool_execution_success_pct']}% | "
+                f"{run['tool_selection_correctness_pct']}% | "
+                f"{run['groundedness_pct']}% | {run['chart_correctness_pct']}% | "
+                f"{run['retry_rate_pct']}% | {run['timeout_count']} | "
+                f"{run['latency_p50_s']} | {run['latency_p95_s']} | "
                 f"{off} | {run['peak_vram_mb']} | {run['peak_host_ram_mb']} |"
             )
 

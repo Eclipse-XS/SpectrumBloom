@@ -191,12 +191,17 @@ def format_profile_for_prompt(
     profile: DatasetProfile,
     df: pd.DataFrame,
     *,
-    max_detailed_cols: int = 16,
+    max_detailed_cols: int = 12,
 ) -> str:
     """Render a compact, token-efficient schema & summary for local 4B LLMs."""
+    total_missing_cells = int(sum(col.null_count for col in profile.column_profiles))
     lines = [
         f"Dataset: {profile.filename} ({profile.rows} rows x {profile.columns} columns)",
-        f"Completeness: {profile.completeness_pct}% | Duplicates: {profile.duplicate_rows}",
+        (
+            f"Total missing cells: {total_missing_cells} | "
+            f"Completeness: {profile.completeness_pct}% | "
+            f"Duplicate rows: {profile.duplicate_rows}"
+        ),
         f"Exact column names: {[col.name for col in profile.column_profiles]}",
         "Column details:",
     ]
@@ -214,8 +219,8 @@ def format_profile_for_prompt(
             stats_str = "empty"
 
         lines.append(
-            f"- {col.name} ({col.dtype}, {col.semantic_type}): "
-            f"nulls={col.null_count} ({col.null_pct}%), unique={col.unique_count}; {stats_str}"
+            f"- {col.name} ({col.dtype}): "
+            f"nulls={col.null_count}, uniq={col.unique_count}; {stats_str}"
         )
 
     if len(profile.column_profiles) > max_detailed_cols:
@@ -225,7 +230,7 @@ def format_profile_for_prompt(
             "to inspect their stats)."
         )
 
-    preview_cols = list(df.columns[:8])
+    preview_cols = list(df.columns[:5])
     sample_row = sanitize_json_payload(df[preview_cols].head(1).to_dict(orient="records"))
     lines.append(f"Sample row (first cols): {sample_row}")
     return "\n".join(lines)

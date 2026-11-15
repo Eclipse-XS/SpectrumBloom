@@ -439,6 +439,13 @@ class SpectrumBloomService:
                 retries_used = int(raw_result.get("retries", 0))
                 latency_ms = round((time.perf_counter() - started) * 1000.0, 2)
 
+                prior_traces = [
+                    trace_item
+                    for prior_msg in record.messages
+                    if prior_msg.role == "assistant"
+                    for trace_item in prior_msg.tool_traces
+                    if not trace_item.error
+                ]
                 eval_summary = evaluate_turn_deterministically(
                     query=query,
                     answer=answer,
@@ -446,6 +453,7 @@ class SpectrumBloomService:
                     figures=figures,
                     profile_context=profile_context,
                     status=status,
+                    prior_tool_traces=prior_traces,
                 )
 
                 for trace_item in traces:

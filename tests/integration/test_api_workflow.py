@@ -79,8 +79,14 @@ def test_end_to_end_api_lifecycle_and_otel(tmp_path: Path, monkeypatch) -> None:
         # Health is open
         health = client.get("/health")
         assert health.status_code == 200
-        assert health.json()["status"] == "ok"
-        assert health.json()["sandbox_dynamic_python_enabled"] is True
+        health_payload = health.json()
+        assert health_payload["status"] == "ok"
+        assert health_payload["sandbox_dynamic_python_enabled"] is True
+        assert health_payload["auth_required"] is True
+        assert health_payload["max_upload_mb"] == settings.max_upload_mb
+        assert health_payload["default_provider"] == settings.llm_provider
+        assert health_payload["default_model"] == settings.llm_model
+        assert "secret-test-token" not in health.text
 
         # Protected endpoints reject missing/bad bearer tokens
         assert client.post("/api/v1/sessions", json={}).status_code == 401

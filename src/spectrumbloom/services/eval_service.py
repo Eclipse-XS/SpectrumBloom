@@ -62,6 +62,7 @@ def evaluate_turn_deterministically(
     figures: list[dict[str, Any]],
     profile_context: str = "",
     status: str = "success",
+    prior_tool_traces: list[ToolTraceItem] | None = None,
 ) -> dict[str, Any]:
     """Run deterministic automated correctness & faithfulness checks on an agent turn."""
     total_tools = len(tool_traces)
@@ -76,23 +77,77 @@ def evaluate_turn_deterministically(
         not figures and bool(re.search(r"!\[[^\]]*\]\(|\bfig_\d+\b", answer, re.IGNORECASE))
     )
 
-    # Check numeric grounding against successful tool outputs and dataset profile context
+    # Check numeric grounding against successful tool outputs (current + prior thread turns,
+    # plus pairwise derived arithmetic) and query/profile context when applicable.
     grounded_ratio = 1.0
-    if non_empty_answer and (total_tools > 0 or profile_context.strip()):
+    if non_empty_answer:
         trace_blob = " ".join(
             f"{t.stdout} {json.dumps(t.result, default=str)}" for t in tool_traces if not t.error
         )
-        evidence_blob = " ".join(part for part in (trace_blob, profile_context, query) if part)
-        answer_nums = re.findall(r"\b\d+(?:\.\d+)?\b", answer)
-        evidence_nums = [float(x) for x in re.findall(r"\b\d+(?:\.\d+)?\b", evidence_blob)]
-        standard_thresholds = {0.05, 0.01} if total_tools > 0 else set()
-        if answer_nums and evidence_blob.strip():
-            matched = 0
-            for raw_num in answer_nums:
-                if raw_num in evidence_blob:
-                    matched += 1
+        prior_blob = " ".join(
+            f"{t.stdout} {json.dumps(t.result, default=str)}"
+            for t in (prior_tool_traces or [])
+            if not t.error
+        )
+        _sup_map = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻", "0123456789+-")
+        _sci_with_coeff = re.compile(
+            r"([-+]?\d+(?:\.\d+)?)\s*[×xX*·⋅]\s*10"
+            r"(?:(?:\*\*|\^)\s*([-+]?\d+)|([⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+))"
+        )
+        _sci_bare_ten = re.compile(
+            r"(?<![A-Za-z0-9_.])10"
+            r"(?:(?:\*\*|\^)\s*([-+]?\d+)|([⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+))"
+        )
+        num_pattern = (
+            r"(?<![A-Za-z0-9_.])[-+]?\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?(?![A-Za-z0-9_]|\.\d)"
+        )
+
+        def _extract_floats(blob: str) -> list[float]:
+            normalized_blob = _sci_with_coeff.sub(
+                lambda m: f"{m.group(1)}e{(m.group(2) or m.group(3)).translate(_sup_map)}",
+                blob,
+            )
+            normalized_blob = _sci_bare_ten.sub(
+                lambda m: f"1e{(m.group(1) or m.group(2)).translate(_sup_map)}",
+                normalized_blob,
+            )
+            vals: list[float] = []
+            for tok in re.findall(num_pattern, normalized_blob):
+                try:
+                    vals.append(float(tok.replace(",", "")))
+                except ValueError:
                     continue
-                val = float(raw_num)
+            return vals
+
+        answer_nums = _extract_floats(answer)
+        trace_nums = _extract_floats(trace_blob)
+        prior_nums = _extract_floats(prior_blob)
+        calc_base = (
+            trace_nums + prior_nums if len(trace_nums) + len(prior_nums) <= 30 else trace_nums
+        )
+        derived_nums: list[float] = []
+        if 2 <= len(calc_base) <= 30:
+            for i in range(len(calc_base)):
+                a = calc_base[i]
+                for j in range(len(calc_base)):
+                    if i == j:
+                        continue
+                    b = calc_base[j]
+                    derived_nums.extend((a - b, a + b))
+                    if abs(b) > 1e-12:
+                        derived_nums.extend((a / b, (a / b) * 100.0))
+
+        evidence_nums = (
+            trace_nums
+            + prior_nums
+            + derived_nums
+            + _extract_floats(profile_context)
+            + _extract_floats(query)
+        )
+        standard_thresholds = {0.05, 0.01} if total_tools > 0 else set()
+        if answer_nums:
+            matched = 0
+            for val in answer_nums:
                 if val in standard_thresholds or any(
                     abs(val - ev) <= max(0.05, 0.015 * abs(ev)) for ev in evidence_nums
                 ):
@@ -108,6 +163,7 @@ def evaluate_turn_deterministically(
         and no_leaked_think
         and no_fabricated_chart_ref
         and figure_validity_rate == 1.0
+        and grounded_ratio >= 0.8
         and (total_tools == 0 or successful_tools > 0)
     )
 

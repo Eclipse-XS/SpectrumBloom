@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     api_host: str = "127.0.0.1"
     api_port: int = 8000
-    cors_allow_origins: str = "http://localhost:8501,http://127.0.0.1:8501"
+    cors_allow_origins: str = (
+        "http://localhost:8501,http://127.0.0.1:8501,http://localhost:4200,http://127.0.0.1:4200"
+    )
     api_auth_token: str = ""
 
     # Storage & session persistence

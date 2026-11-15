@@ -336,3 +336,48 @@ def test_executor_app_enforces_token_and_remote_sandbox_roundtrips(
     )
     with pytest.raises(SandboxUnavailableError, match="no fallback"):
         remote.execute("result = 1", sample_df)
+
+
+def test_executor_app_startup_fails_closed_on_weak_token_and_rejects_bad_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert executor_app._is_strong_executor_token("") is False
+    assert executor_app._is_strong_executor_token("changeme") is False
+    assert (
+        executor_app._is_strong_executor_token("local-compose-sandbox-executor-secret-token")
+        is False
+    )
+    assert executor_app._is_strong_executor_token("short-token") is False
+    assert executor_app._is_strong_executor_token("a" * 32) is True
+
+    # Startup lifespan MUST fail closed if SANDBOX_EXECUTOR_TOKEN is weak or placeholder
+    monkeypatch.setattr(
+        executor_app, "_EXECUTOR_TOKEN", "local-compose-sandbox-executor-secret-token"
+    )
+    with pytest.raises(RuntimeError, match="SANDBOX_EXECUTOR_TOKEN"):
+        with TestClient(executor_app.app):
+            pass
+
+    monkeypatch.setattr(executor_app, "_EXECUTOR_TOKEN", "strong-executor-token-for-unit-test-1234")
+    with TestClient(executor_app.app) as client:
+        health = client.get("/health")
+        assert health.status_code == 200
+        assert health.json()["status"] == "ok"
+
+        bad_b64 = client.post(
+            "/execute",
+            json={"code": "x = 1", "data_b64": "not!valid!base64!", "data_format": "parquet"},
+            headers={"Authorization": "Bearer strong-executor-token-for-unit-test-1234"},
+        )
+        assert bad_b64.status_code == 422
+
+        import base64
+
+        oversized_raw = b"0" * (executor_app._MAX_DECODED_PAYLOAD_BYTES + 1024)
+        oversized_b64 = base64.b64encode(oversized_raw).decode("ascii")
+        too_big = client.post(
+            "/execute",
+            json={"code": "x = 1", "data_b64": oversized_b64, "data_format": "parquet"},
+            headers={"Authorization": "Bearer strong-executor-token-for-unit-test-1234"},
+        )
+        assert too_big.status_code == 422

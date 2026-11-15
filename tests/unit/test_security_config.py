@@ -170,3 +170,18 @@ def test_disabled_sandbox_exposes_flag_in_health_endpoint() -> None:
         body = health.json()
         assert body["sandbox_backend"] == "disabled"
         assert body["sandbox_dynamic_python_enabled"] is False
+
+
+def test_docker_compose_has_no_hardcoded_secret_fallbacks() -> None:
+    import re
+    from pathlib import Path
+
+    compose_path = Path(__file__).resolve().parents[2] / "docker-compose.yml"
+    compose_text = compose_path.read_text(encoding="utf-8")
+    assert not re.search(r"\$\{[A-Z0-9_]*TOKEN[^}]*:-", compose_text), (
+        "Token env vars must not define hardcoded fallback defaults in docker-compose.yml"
+    )
+    for secret_var in ("SANDBOX_EXECUTOR_TOKEN", "API_AUTH_TOKEN"):
+        assert re.search(rf"\$\{{{secret_var}:\?", compose_text), (
+            f"{secret_var} must require explicit env injection via ':?' in docker-compose.yml"
+        )

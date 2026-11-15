@@ -9,8 +9,8 @@ SpectrumBloom is an independently engineered modular monolith built with **FastA
 ## Architecture Overview
 
 ```text
-Streamlit UI (src/spectrumbloom/ui/app.py) — 5-tab interactive studio
-   │ HTTP REST (httpx + Bearer Token)
+Angular 19 + TypeScript Workspace (frontend/, Nginx :8501 Compose / :4200 dev)
+   │ HTTP REST (HttpClient + memory-only Bearer Interceptor)
    ▼
 FastAPI Gateway (src/spectrumbloom/api/routes.py)  ── Bearer Auth + CORS + Prod/Host Guards + OTel
    │
@@ -27,6 +27,7 @@ SpectrumBloomService (src/spectrumbloom/services/session_service.py)
    │      └── Dev:     SubprocessSandbox (strict_subprocess restricted to APP_ENV=development; JobObj/POSIX rlimits)
    └── Eval & Telemetry (services/, core/): Deterministic turn verifier, DeepEval Ollama judge, OTel + Langfuse
 ```
+*(Legacy Streamlit UI remains available under Docker Compose `--profile legacy-ui` on port `8502`.)*
 
 See full architectural details in [docs/architecture.md](docs/architecture.md), security & clean-room audit findings in [docs/reference-audit.md](docs/reference-audit.md), and local 4 GB VRAM benchmarks in [docs/optimization-report.md](docs/optimization-report.md).
 
@@ -34,19 +35,21 @@ See full architectural details in [docs/architecture.md](docs/architecture.md), 
 
 ## Interactive UI Workspace
 
-**Upload dataset → Data Overview → Automated EDA → Ask AI & Traces → ML Lab → Export Results**
+**Angular 19 + TypeScript frontend (`frontend/`):** **Overview → Data Explorer → Automated EDA → AI Analyst → ML Lab → Reports & Export → Sessions & Settings**
 
-Captured live from the containerized Streamlit UI connected to FastAPI, isolated `sandbox-executor`, and Ollama (`qwen3:4b-instruct`):
+Built with standalone Angular components and signals, memory-only Bearer token handling (`AuthTokenService` — never persisted to `localStorage` or bundled assets), `marked` + `DOMPurify` XSS-sanitized markdown (`SafeMarkdownPipe`), lazy-loaded `plotly.js-dist-min` visualizations, light/dark themes, and unprivileged Nginx serving (`nginxinc/nginx-unprivileged:1.27-alpine`). Captured live against FastAPI, `DockerSandbox`, and Ollama (`qwen3:4b-instruct`):
 
-| Data Overview & Inferred Types | Automated EDA & Interactive Plotly Charts |
+| Overview Workspace (Light) | Automated EDA & Plotly Charts |
 | :---: | :---: |
-| ![Data Overview](docs/screenshots/01_overview.png) | ![Automated EDA](docs/screenshots/02_automated_eda.png) |
+| ![Angular Overview Light](docs/screenshots/angular_overview_light.png) | ![Angular Automated EDA](docs/screenshots/angular_eda_light.png) |
 
-| Ask AI, Python Traces & Verification Checks | Leak-Safe Baseline ML Lab & Exports |
+| AI Analyst, Traces & Groundedness Verification | Leak-Safe Baseline ML Lab |
 | :---: | :---: |
-| ![Ask AI & Traces](docs/screenshots/03_ask_ai_traces.png) | ![ML Lab](docs/screenshots/04_ml_lab.png) |
+| ![Angular AI Analyst](docs/screenshots/angular_analyst_light.png) | ![Angular ML Lab](docs/screenshots/angular_ml_light.png) |
 
-> Full Artifact Export Panel: ![Export Results](docs/screenshots/05_export_results.png)
+| Overview Workspace (Dark Mode) | Mobile Responsive Navigation & Settings (390px) |
+| :---: | :---: |
+| ![Angular Overview Dark](docs/screenshots/angular_overview_dark.png) | ![Angular Settings Mobile](docs/screenshots/angular_settings_mobile.png) |
 
 ---
 
@@ -95,8 +98,19 @@ Evaluated across **67 analytical tasks spanning 6 diverse datasets** (`sample_ec
 | **`qwen3:4b-instruct` (Default)** | **1** | **61/67 (91.0%)** | **90.8% / 90.8%** | **9.0%** | **0** | **11.72** | **33.91** | 66.3% | 2623.0 |
 | **`qwen3:4b-instruct` (Default)** | **2** | **61/67 (91.0%)** | **90.6% / 90.6%** | **9.0%** | **0** | **17.49** | **40.75** | 66.3% | 2617.0 |
 
-- **`qwen3:4b-instruct` selected as empirical default:** Exceeds the **≥90% correctness target (91.0%, 100% repeat agreement)** and **≤45 s P50 / ≤120 s P95** latency targets despite partial host RAM offloading (`66.3%` GPU, `2236 / 3371 MB`), outperforming 1.5B (`70.1–71.6%`) and 3B (`70.1%`, `0/3` multi-step) across complex schemas, invalid-column handling (`100%`), and statistical tests (`100%`).
-- **Transparent target gap:** Tool execution on `qwen3:4b-instruct` measured **90.6–90.8%** vs the 95% stretch target due to ~6 recoverable first-attempt Pydantic schema retries (`9.0%` retry rate). See [docs/optimization-report.md](docs/optimization-report.md) for per-category tables, the 6 recurring failure cases, the earlier 8-task quantization sweep (`Q2_K`/`Q4_K_M`/`Q8_0`), analytical 4 GB VRAM/QLoRA budgets, and execution-verified SFT trajectories ([`benchmarks/distilled_eda_sft.jsonl`](benchmarks/distilled_eda_sft.jsonl)).
+- **`qwen3:4b-instruct` selected as empirical default:** In the initial 3-model baseline (`2026-11-14`), `qwen3:4b-instruct` reached **61/67 (91.0%)** with `90.6–90.8%` tool execution, outperforming 1.5B (`70.1–71.6%`) and 3B (`70.1%`, `0/3` multi-step).
+
+### Post-Hardening Evaluation (`qwen3:4b-instruct`, `DockerSandbox`, `num_ctx=4096`, `2026-11-15`)
+
+After compacting schema/history prompts, preserving `snake_case` identifiers in markdown normalization, and normalizing Unicode superscript scientific notation in evaluation, **`qwen3:4b-instruct`** improved on both the 67-task Dev suite and an unseen 30-task Holdout suite (`benchmarks/eval_suite_holdout_30.json`):
+
+| Suite | Run | Complete / Answer | Tool Exec | Tool Sel | Grounded | Chart | Retry Rate | Timeouts | P50 (s) | P95 (s) | Peak VRAM (MB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Dev 67 Tasks (`latest_workflow_benchmark`) | 1 | **62/67 (92.5%)** | **97.0%** | **100.0%** | **100.0%** | **100.0%** | **3.0%** | 0 | 12.01 | 25.01 | 2350.0 |
+| Dev 67 Tasks (`latest_workflow_benchmark`) | 2 | **62/67 (92.5%)** | **97.0%** | **100.0%** | **100.0%** | **100.0%** | **3.0%** | 0 | 13.93 | 27.42 | 2350.0 |
+| Unseen Holdout 30 Tasks (`holdout_workflow_benchmark`) | 1 | **29/30 (96.7%)** | **94.7%** | **100.0%** | **100.0%** | **100.0%** | **6.7%** | 0 | **10.46** | **19.98** | 2350.0 |
+
+See [docs/optimization-report.md](docs/optimization-report.md) for per-category scores, remaining edge cases (`wine_01_profile`, `wine_04_corr`, `wine_09_mt1`, `macro_06_normality`, `co2_01_profile` on Dev; `hold_co2_04_diff` on Holdout), historical 8-task quantization sweeps, analytical 4 GB VRAM/QLoRA budgets, and execution-verified SFT trajectories ([`benchmarks/distilled_eda_sft.jsonl`](benchmarks/distilled_eda_sft.jsonl)).
 
 ---
 
@@ -105,9 +119,10 @@ Evaluated across **67 analytical tasks spanning 6 diverse datasets** (`sample_ec
 | Component | Status | Evidence / Scope |
 | --- | --- | --- |
 | FastAPI REST + Deterministic EDA + Leak-Safe ML + Auth Guards | Verified | Unit & integration tests (`tests/`), strict prod/non-loopback auth guards |
+| Angular 19 + TypeScript Workspace (`frontend/`) | Verified | Typecheck, Jasmine/Karma specs, production `ng build`, Playwright live E2E (`ng serve` + FastAPI + Ollama + Docker) |
 | Security Isolation Suite (FS, network, fork/spawn, OOM/CPU, missing backend, disabled mode) | Verified | `tests/unit/test_sandbox_security.py`, `tests/unit/test_security_config.py`, `tests/integration/test_docker_sandbox.py` |
-| Isolated Docker Compose Stack (`api` → `sandbox-executor` → `spectrumbloom-sandbox` + `ui`) | Verified E2E | Live `docker compose up --build --wait`, `/api/v1/sessions/*/query` `python_repl` Plotly execution (`7.66 s`), zero `docker.sock` mount on `api`, live UI screenshots |
-| 67-Task Multi-Dataset Agent Evaluation Suite | Measured | 3 models × 2 repeats inside `DockerSandbox` ([`latest_workflow_benchmark.json`](benchmarks/results/latest_workflow_benchmark.json)) |
+| Isolated Docker Compose Stack (`frontend` Nginx `:8501` → `api` → `sandbox-executor` → `spectrumbloom-sandbox`) | Verified E2E | Live `docker compose up -d --build --wait`, `/health`, `401` auth guard, sample CSV upload, Playwright UI smoke (zero token in `localStorage`/bundle), live `python_repl` query via `remote` sandbox |
+| 67-Task Dev (`×2`) + 30-Task Unseen Holdout Agent Evaluation | Measured | `qwen3:4b-instruct` inside `DockerSandbox` (`62/67 = 92.5%`, `29/30 = 96.7%`) in [`latest_workflow_benchmark.json`](benchmarks/results/latest_workflow_benchmark.json) & [`holdout_workflow_benchmark.json`](benchmarks/results/holdout_workflow_benchmark.json) |
 | Historical 8-Task Quantization Sweep (`Q2_K` / `Q4_K_M` / `Q8_0` / `Qwen3-4B`) | Measured | Baseline microbenchmark in [`benchmarks/results/latest_benchmark.json`](benchmarks/results/latest_benchmark.json) & `latest_tool_benchmark.json` |
 | Inference VRAM Budget & QLoRA Memory Table (`vram_budget.py`, `qlora.py`) | Analytical estimate | Formula-based VRAM bounds + `qlora.py --check-only`; CUDA weight updates **not run** |
 | SFT Trajectory Distillation (`distillation.py`) | Executed (dataset only) | Generated `6/8` execution-verified JSONL examples; downstream PyTorch QLoRA fine-tuning **not run** |
@@ -119,6 +134,7 @@ Evaluated across **67 analytical tasks spanning 6 diverse datasets** (`sample_ec
 
 ### 1. Prerequisites
 - Python **3.12** (supported: `>=3.11,<3.14`) and [`uv`](https://docs.astral.sh/uv/)
+- **Node.js 22** & `npm` (for the Angular 19 frontend workspace in `frontend/`)
 - **Docker** (required for default `SANDBOX_BACKEND=docker` and isolated Compose execution; local `APP_ENV=development` workstations without Docker can explicitly opt into `SANDBOX_BACKEND=strict_subprocess`)
 - Local **Ollama** (`ollama pull qwen3:4b-instruct`) or **llama.cpp** OpenAI-compatible server
 
@@ -131,21 +147,25 @@ uv venv --python 3.12 .venv
 uv pip install -e ".[eval,dev]"
 cp .env.example .env
 docker build -f Dockerfile.sandbox -t spectrumbloom-sandbox:latest .
+
+# Install Angular frontend dependencies
+cd frontend && npm ci && cd ..
 ```
 
-### 3. Start Backend API & Streamlit UI
+### 3. Start Backend API & Angular Workspace
 Terminal 1 — FastAPI backend:
 ```bash
 uvicorn spectrumbloom.main:app --host 127.0.0.1 --port 8000
 ```
-Terminal 2 — SpectrumBloom UI:
+Terminal 2 — Angular 19 frontend (dev proxy `/api` + `/health` -> `127.0.0.1:8000`):
 ```bash
-streamlit run src/spectrumbloom/ui/app.py --server.port 8501
+cd frontend && npm start
 ```
-Then open `http://localhost:8501` (API interactive docs at `http://127.0.0.1:8000/docs`), or run the standalone REST workflow script:
+Then open `http://localhost:4200` (API interactive docs at `http://127.0.0.1:8000/docs`), or run the standalone REST workflow script:
 ```bash
 python examples/sample_api_workflow.py
 ```
+*(Legacy Streamlit UI remains runnable locally with `streamlit run src/spectrumbloom/ui/app.py --server.port 8502`.)*
 
 ---
 
@@ -174,10 +194,11 @@ python examples/sample_api_workflow.py
 ## Docker Compose & Optional Deployments
 
 - **Non-privileged Docker Compose (`cap_drop: ALL`, `no-new-privileges: true`):**
+  Set `API_AUTH_TOKEN` and `SANDBOX_EXECUTOR_TOKEN` (>= 16 random chars) in a gitignored `.env`, then start the Angular Nginx UI (`http://127.0.0.1:8501`), FastAPI (`127.0.0.1:8000`), and isolated `sandbox-executor`:
   ```bash
-  docker compose up --build
+  docker compose up -d --build --wait
   ```
-  Optional profiles add Redis persistence (`--profile persistence`), containerized Ollama (`--profile local-llm`), or Jaeger OpenTelemetry tracing (`--profile observability`).
+  Optional profiles add the legacy Streamlit UI (`--profile legacy-ui` on `127.0.0.1:8502`), Redis persistence (`--profile persistence`), containerized Ollama (`--profile local-llm`), or Jaeger OpenTelemetry tracing (`--profile observability`).
 - **Optional Hugging Face Spaces Demo:** See [`deploy/hf-spaces/README.md`](deploy/hf-spaces/README.md).
 - **Optional Google Cloud Run:** See [`deploy/gcp/README.md`](deploy/gcp/README.md) (no mandatory paid services required for local use).
 
@@ -190,9 +211,19 @@ ruff check src tests benchmarks/prepare_datasets.py
 ruff format --check src tests benchmarks/prepare_datasets.py
 pytest -v
 
-# Re-prepare the 6 evaluation datasets and run the 67-task agent workflow benchmark
+# Angular 19 frontend checks & live E2E
+cd frontend
+npm run typecheck
+npx tsc --noEmit -p tsconfig.spec.json
+npm run test:ci
+npm run build
+npm run e2e
+cd ..
+
+# Re-prepare the 6 evaluation datasets and run the 67-task + 30-task holdout workflow benchmarks
 python benchmarks/prepare_datasets.py
 python -m spectrumbloom.optimization.workflow_benchmark --sandbox-backend docker --num-ctx 4096 --repeats 2
+python -m spectrumbloom.optimization.workflow_benchmark --suite benchmarks/eval_suite_holdout_30.json --models qwen3:4b-instruct --sandbox-backend docker --num-ctx 4096 --repeats 1 --output-prefix holdout_workflow_benchmark
 python -m spectrumbloom.optimization.vram_budget
 python -m spectrumbloom.optimization.qlora --check-only --model-id Qwen/Qwen3-4B
 ```
@@ -203,13 +234,14 @@ python -m spectrumbloom.optimization.qlora --check-only --model-id Qwen/Qwen3-4B
 
 ```text
 SpectrumBloom/
-├── .github/workflows/ci.yml        # Ruff + Pytest + Docker build CI (API, Sandbox, Executor)
-├── benchmarks/                     # 67-task eval suite, 6-dataset provenance, benchmark JSON/MD results
+├── .github/workflows/ci.yml        # Backend Ruff/Pytest + Frontend CI (tsc/Karma/ng build) + Docker builds
+├── benchmarks/                     # 67-task Dev + 30-task Holdout suites, provenance, benchmark JSON/MD results
 ├── deploy/
 │   ├── gcp/                        # Optional Google Cloud Run manifest & guide (SANDBOX_BACKEND=disabled)
 │   └── hf-spaces/                  # Optional single-container HF Spaces demo (SANDBOX_BACKEND=disabled)
 ├── docs/                           # Architecture, reference audit, optimization report & UI screenshots
 ├── examples/                       # Sample e-commerce CSV & REST client workflow script
+├── frontend/                       # Angular 19 + TypeScript workspace, Karma/Playwright tests, unprivileged Nginx Dockerfile
 ├── src/spectrumbloom/
 │   ├── agent/                      # LangGraph state machine, deterministic/sandbox tools & repair loop
 │   ├── api/                        # FastAPI routers & dependency injection
@@ -222,12 +254,12 @@ SpectrumBloom/
 │   ├── repositories/               # Memory/Redis session stores & Local/S3 dataset stores
 │   ├── sandbox/                    # AST gate, isolated runner, Docker/Remote executor service, JobObj/rlimits
 │   ├── services/                   # SessionService & deterministic + DeepEval evaluators
-│   └── ui/                         # 5-tab Streamlit REST UI workspace
+│   └── ui/                         # Legacy Streamlit UI (optional Compose legacy-ui profile)
 ├── tests/                          # Security, sandbox, EDA, ML, API workflow & Docker isolation tests
-├── Dockerfile                      # Non-root API/UI runtime image
+├── Dockerfile                      # Non-root API runtime image
 ├── Dockerfile.executor             # Isolated internal Docker executor service image
 ├── Dockerfile.sandbox              # Air-gapped non-root sandbox image (--compile-bytecode)
-├── docker-compose.yml              # Multi-network Compose stack (api -> sandbox-executor -> sandbox)
+├── docker-compose.yml              # Multi-network Compose stack (frontend -> api -> sandbox-executor -> sandbox)
 ├── LICENSE                         # MIT License
 └── pyproject.toml                  # Hatchling build & optional extras (eval, redis, s3, optimization)
 ```

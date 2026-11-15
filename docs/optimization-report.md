@@ -149,3 +149,27 @@ Full machine-readable telemetry: [`benchmarks/results/latest_workflow_benchmark.
      - `co2_01_profile`: answered dataset shape/missingness directly from the injected system prompt summary without calling `get_statistical_summary`.
      - `macro_09_mt1`: invoked `aggregate_data` without applying the follow-up period filter (`1980+` / `year >= 1980`).
      - `macro_08_multistep`: multi-step conditional group comparison failed numerical mean verification (Run 1) / exhausted bounded retries on argument schema (Run 2).
+
+---
+
+## 6. Post-Hardening Validation & Unseen Holdout Benchmark (`2026-11-15`)
+
+Following the 3-model baseline above, three targeted correctness fixes were applied and verified across both `benchmarks/eval_suite_60.json` (`67 × 2`) and the unseen 30-task holdout suite (`benchmarks/eval_suite_holdout_30.json`, `30 × 1`) on `qwen3:4b-instruct` (`DockerSandbox`, `num_ctx=4096`):
+
+1. **Identifier & Markdown Normalization (`optimization/workflow_benchmark.py`):** `_strip_markdown` regex updated so internal underscores in `snake_case` column names (`petal_length_cm`, `revenue_usd`, etc.) are preserved.
+2. **Schema & History Compaction (`eda/profiler.py`, `agent/graph.py`, `llm/prompts.py`):** Capped `format_profile_for_prompt` at `max_detailed_cols=12` with 5-column previews and compacted `_compact_history` (`prior_qa[-2:]`, bounded `ToolMessage` slices), preventing wide-dataset prompt overflows (`<= 4096` tokens) and recovering `hold_wine_01_profile` on the unseen holdout suite.
+3. **Scientific Notation Grounding (`services/eval_service.py`):** Normalized Unicode superscript and caret/double-star exponent notation (`2 × 10⁻⁶` -> `2e-6`, `10⁻⁵` -> `1e-5`) prior to numeric grounding checks.
+
+### 6.1 Measured Post-Hardening Results (`qwen3:4b-instruct`, `DockerSandbox`, `num_ctx=4096`)
+
+| Suite | Run | Complete / Answer | Tool Exec (Calls) | Tool Sel | Grounded | Chart | Retry Rate | Timeouts | P50 (s) | P95 (s) | GPU Offload | Peak VRAM (MB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Dev 67 Tasks (`latest_workflow_benchmark.json`) | 1 | **62/67 (92.5%)** | **97.0%** (`65/67`) | **100.0%** | **100.0%** | **100.0%** (`6/6`) | **3.0%** | 0 | 12.01 | 25.01 | 66.3% | 2350.0 |
+| Dev 67 Tasks (`latest_workflow_benchmark.json`) | 2 | **62/67 (92.5%)** | **97.0%** (`65/67`) | **100.0%** | **100.0%** | **100.0%** (`6/6`) | **3.0%** | 0 | 13.93 | 27.42 | 66.3% | 2350.0 |
+| Holdout 30 Tasks (`holdout_workflow_benchmark.json`) | 1 | **29/30 (96.7%)** | **94.7%** (`36/38`) | **100.0%** | **100.0%** | **100.0%** (`2/2`) | **6.7%** | 0 | **10.46** | **19.98** | 66.3% | 2350.0 |
+
+### 6.2 Category Breakdown & Remaining Edge Cases (`2026-11-15`)
+
+- **Dev 67×2 (`100.0%` repeat pass agreement across Run 1 & Run 2):** `missingness` 3/3 (100.0%), `filtering` 6/6 (100.0%), `aggregation` 6/6 (100.0%), `outliers` 6/6 (100.0%), `visualization` 6/6 (100.0%), `invalid_input` 6/6 (100.0%), `multi_step` 3/3 (100.0%), `multi_turn` 11/12 (91.7%), `statistical_test` 6/7 (85.7%), `correlation` 5/6 (83.3%), `profiling` 4/6 (66.7%).
+- **Remaining 5 Dev failures (identical in Run 1 & Run 2):** `wine_01_profile`, `wine_04_corr`, `wine_09_mt1`, `macro_06_normality`, `co2_01_profile`. (Previously failing `ecom_10_mt2`, `bc_10_mt2`, `macro_08_multistep`, `macro_09_mt1`, and `macro_10_mt2` all passed in both runs.)
+- **Holdout 30 (`29/30 = 96.7%`):** `100.0%` across `profiling` (2/2), `missing_values` (1/1), `filtering` (6/6), `aggregation` (3/3), `statistical_test` (3/3), `outliers` (1/1), `visualization` (2/2), `invalid_input` (1/1), and `multi_turn` (6/6); `multi_step` scored 4/5 (80.0%) with a single remaining failure (`hold_co2_04_diff`).

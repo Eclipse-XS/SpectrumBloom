@@ -275,3 +275,379 @@ def test_agent_graph_deduplicates_recovers_and_preserves_multi_turn_state() -> N
     recovered = graph_disabled.invoke(query="Just reply", thread_id="t_disabled")
     assert recovered["status"] == "success"
     assert "Follow-up works fine" in recovered["final_answer"]
+
+
+def test_benchmark_verifier_never_rescues_from_traces_and_verifies_entity_pairing() -> None:
+    import pandas as pd
+
+    from spectrumbloom.optimization.workflow_benchmark import (
+        _evaluate_tool_selection,
+        _verify_task_against_ground_truth,
+    )
+
+    df = pd.DataFrame(
+        {
+            "region": ["East", "East", "West", "West"],
+            "year": [1995, 1998, 2002, 2005],
+            "score": [50.0, 50.0, 100.0, 100.0],
+        }
+    )
+
+    # Answer missing numbers MUST fail even when traces contain exact values
+    agg_task = {
+        "id": "t_agg_all",
+        "prompt": "Mean score by region",
+        "assertion": {"op": "groupby_all", "group_by": "region", "metric": "score", "agg": "mean"},
+    }
+    fake_traces = [
+        {"tool": "aggregate_data", "stdout": '{"East": 50.0, "West": 100.0}', "result": None}
+    ]
+    ok_missing, _ = _verify_task_against_ground_truth(
+        agg_task, df, "Computed group averages cleanly.", "success", [], fake_traces, {}
+    )
+    assert ok_missing is False
+
+    # Swapped entity-to-value associations MUST fail; matching table/bullets pass
+    ok_swapped, _ = _verify_task_against_ground_truth(
+        agg_task,
+        df,
+        "For East the mean is 100.0, and for West the mean is 50.0.",
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_swapped is False
+
+    ok_table, _ = _verify_task_against_ground_truth(
+        agg_task,
+        df,
+        "| Region | Mean Score |\n| --- | --- |\n| East | 50.0 |\n| West | 100.0 |",
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_table is True
+
+    # Split means must keep entity pairing and anaphoric ', it is ...' clauses intact
+    split_task = {
+        "id": "t_split",
+        "prompt": "Compare score before 2000 vs >= 2000",
+        "assertion": {
+            "op": "split_means",
+            "column": "score",
+            "split_col": "year",
+            "split_val": 2000,
+        },
+    }
+    ok_split_swap, _ = _verify_task_against_ground_truth(
+        split_task,
+        df,
+        "For year < 2000 the mean is 100.0, while for year >= 2000 it is 50.0.",
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_split_swap is False
+
+    ok_split_good, _ = _verify_task_against_ground_truth(
+        split_task,
+        df,
+        "For year < 2000 it is 50.0, while for year ≥ 2000 (year > 1999), it is 100.0.",
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_split_good is True
+
+    # group_test requires p-value
+    gtest_task = {
+        "id": "t_gtest",
+        "prompt": "Run Mann-Whitney test",
+        "assertion": {
+            "op": "group_test",
+            "test": "mannwhitney",
+            "metric": "score",
+            "group": "region",
+            "group_a": "East",
+            "group_b": "West",
+        },
+    }
+    ok_no_p, _ = _verify_task_against_ground_truth(
+        gtest_task, df, "There is a clear difference between East and West.", "success", [], [], {}
+    )
+    assert ok_no_p is False
+
+    # Tool selection correctness checks deterministic routing
+    assert _evaluate_tool_selection("filtered_count", [{"tool": "aggregate_data"}]) is True
+    assert _evaluate_tool_selection("filtered_count", [{"tool": "python_repl"}]) is False
+    assert _evaluate_tool_selection("filtered_count", []) is False
+
+
+def test_deterministic_grounding_and_derived_arithmetic() -> None:
+    # Hallucinated numerical answer with zero tool executions must fail grounding gate
+    hallucinated = evaluate_turn_deterministically(
+        query="What is mean revenue for West?",
+        answer="The mean revenue for West is 44.34.",
+        tool_traces=[],
+        figures=[],
+        profile_context="",
+        status="success",
+    )
+    assert hallucinated["numeric_grounding_ratio"] == 0.0
+    assert hallucinated["passed"] is False
+
+    # Pairwise derived ratio/difference and comma-formatted trailing numbers pass
+    traces = [
+        ToolTraceItem(
+            tool="aggregate_data",
+            stdout="",
+            result={"value": 1422.2863, "other": 558.8994, "gdp": 12319.57},
+        )
+    ]
+    derived = evaluate_turn_deterministically(
+        query="Compare ratio and difference",
+        answer="Mean is 12,319.57. Ratio is 2.545 and difference is 863.39.",
+        tool_traces=traces,
+        figures=[],
+        status="success",
+    )
+    assert derived["numeric_grounding_ratio"] == 1.0
+    assert derived["passed"] is True
+
+    # Cross-turn comparative citation grounded via prior_tool_traces
+    turn1_trace = [ToolTraceItem(tool="aggregate_data", stdout="", result={"value": 20.59})]
+    turn2_trace = [ToolTraceItem(tool="aggregate_data", stdout="", result={"value": 13.35})]
+    cross_turn = evaluate_turn_deterministically(
+        query="Now compare benign median against malignant",
+        answer="Malignant was 20.59 vs benign 13.35 (difference 7.24).",
+        tool_traces=turn2_trace,
+        figures=[],
+        prior_tool_traces=turn1_trace,
+        status="success",
+    )
+    assert cross_turn["numeric_grounding_ratio"] == 1.0
+    assert cross_turn["passed"] is True
+
+
+def test_aggregate_and_stat_tool_fixes() -> None:
+    import pandas as pd
+    import pytest
+
+    from spectrumbloom.agent.deterministic_tools import (
+        format_statistical_focus,
+        run_aggregate_data,
+        run_statistical_test,
+    )
+    from spectrumbloom.agent.tools import AggregateDataInput
+    from spectrumbloom.eda.profiler import format_profile_for_prompt, profile_dataframe
+    from spectrumbloom.eda.statistics import compute_statistics
+
+    parsed = AggregateDataInput(
+        metric_column="val",
+        agg_func="avg",
+        filter_column="region",
+        filter_op="in",
+        filter_value=["East", "West"],
+        limit=0,
+    )
+    assert parsed.agg_func == "mean"
+    assert parsed.limit == 20
+
+    df = pd.DataFrame(
+        {
+            "region": ["East", "East", "West", "West", "North", "North"],
+            "year": [1998, 2001, 2002, 2003, 1995, 1996],
+            "val": [10.0, 20.0, 30.0, 40.0, 50.0, None],
+        }
+    )
+    res_in = run_aggregate_data(
+        df,
+        metric_column="val",
+        agg_func="mean",
+        filter_column="region",
+        filter_op="in",
+        filter_value=["East", "West"],
+    )
+    assert res_in["rows_matched"] == 4
+    assert res_in["total_dataset_rows"] == 6
+    assert res_in["filters_applied"] == ["region in ['East', 'West']"]
+    assert res_in["value"] == 25.0
+
+    with pytest.raises(ValueError, match="logical AND"):
+        run_aggregate_data(
+            df,
+            metric_column="val",
+            agg_func="mean",
+            filter_column="year",
+            filter_op=">=",
+            filter_value=2000,
+            filter2_column="year",
+            filter2_op="<",
+            filter2_value=2000,
+        )
+
+    # Infer column_b cleanly for kruskal(group_a='region') and mannwhitney(group_a/group_b)
+    kw = run_statistical_test(df, test_type="kruskal", column_a="val", group_a="region")
+    assert kw["group_column"] == "region" and "p_value" in kw
+    mw = run_statistical_test(
+        df, test_type="mannwhitney", column_a="val", group_a="East", group_b="West"
+    )
+    assert mw["group_column"] == "region" and "p_value" in mw
+
+    # Missing cell totals surfaced in both profile focus and prompt formatter
+    prof = profile_dataframe(df, filename="t.csv")
+    rep = compute_statistics(df, prof)
+    focus = format_statistical_focus(df, prof, rep, focus="profile")
+    assert focus["total_missing_cells"] == 1
+    assert "Total missing cells: 1" in format_profile_for_prompt(prof, df)
+
+
+def test_agent_graph_enforces_tools_filter_operators_and_rejects_spurious_filters() -> None:
+    import pandas as pd
+    from langchain_core.messages import AIMessage as LCAIMessage
+
+    from spectrumbloom.agent.graph import EDAAgentGraph
+    from spectrumbloom.eda.profiler import format_profile_for_prompt, profile_dataframe
+    from spectrumbloom.eda.statistics import compute_statistics
+    from spectrumbloom.sandbox.service import DisabledSandbox
+
+    df = pd.DataFrame(
+        {
+            "region": ["East", "East", "West", "West"],
+            "year": [1999, 2000, 2001, 2002],
+            "revenue": [100.0, 200.0, 300.0, 400.0],
+        }
+    )
+    prof = profile_dataframe(df, filename="sales.csv")
+    rep = compute_statistics(df, prof)
+    ctx = format_profile_for_prompt(prof, df)
+
+    class _StrictAgentLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            self.calls += 1
+            last_text = str(messages[-1].content)
+            # Call 1: skip tools -> nudged (call 2) -> '>' fails -> spurious filter -> '>='
+            if self.calls == 1:
+                return LCAIMessage(content="Mean revenue is 44.34.")
+            if self.calls == 2 and "You have not called any tool" in last_text:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_bad_op",
+                            "name": "aggregate_data",
+                            "args": {
+                                "metric_column": "revenue",
+                                "agg_func": "mean",
+                                "filter_column": "year",
+                                "filter_op": ">",
+                                "filter_value": 2000,
+                            },
+                        }
+                    ],
+                )
+            if self.calls == 3:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_bad_filter",
+                            "name": "aggregate_data",
+                            "args": {
+                                "metric_column": "revenue",
+                                "agg_func": "mean",
+                                "filter_column": "region",
+                                "filter_op": "in",
+                                "filter_value": ["East"],
+                            },
+                        }
+                    ],
+                )
+            if self.calls == 4:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_good",
+                            "name": "aggregate_data",
+                            "args": {
+                                "metric_column": "revenue",
+                                "agg_func": "mean",
+                                "filter_column": "year",
+                                "filter_op": ">=",
+                                "filter_value": 2000,
+                            },
+                        }
+                    ],
+                )
+            return LCAIMessage(content="Mean revenue for year >= 2000 is 300.0.")
+
+    graph = EDAAgentGraph(
+        chat_model=_StrictAgentLLM(),
+        sandbox=DisabledSandbox(),
+        df_provider=lambda: df,
+        dataset_context_provider=lambda: ctx,
+        stats_provider=lambda: rep,
+        profile_provider=lambda: prof,
+    )
+    res = graph.invoke(query="What is mean revenue where year >= 2000?", thread_id="t_strict")
+    assert res["status"] == "success"
+    assert res["retries"] == 2
+    assert any("Filter operator mismatch" in (t.get("error") or "") for t in res["tool_traces"])
+    assert any("Spurious filter rejected" in (t.get("error") or "") for t in res["tool_traces"])
+    assert "300.0" in res["final_answer"]
+
+
+def test_strip_markdown_preserves_snake_case_identifiers() -> None:
+    from spectrumbloom.optimization.workflow_benchmark import _strip_markdown
+
+    cleaned = _strip_markdown("**customer_age** (`class_0` and _italic_ *gdp_per_capita*)")
+    assert "customer_age" in cleaned
+    assert "class_0" in cleaned
+    assert "gdp_per_capita" in cleaned
+    assert "italic" in cleaned
+    assert "**" not in cleaned
+    assert "`" not in cleaned
+
+
+def test_deterministic_eval_grounds_unicode_scientific_notation() -> None:
+    traces = [
+        ToolTraceItem(
+            tool="compute_statistical_test",
+            code="pearsonr(x, y)",
+            stdout="",
+            result={"statistic": 0.347955, "p_value": 2e-6},
+            error=None,
+            figure_count=0,
+            duration_ms=20.0,
+        )
+    ]
+    report = evaluate_turn_deterministically(
+        query="What is Pearson r and p-value?",
+        answer="Pearson r is 0.347955 with p = 2 × 10⁻⁶ (and threshold < 10⁻⁵).",
+        tool_traces=traces
+        + [
+            ToolTraceItem(
+                tool="python_repl",
+                code="result = 1e-5",
+                stdout="0.00001",
+                result=1e-5,
+                error=None,
+                figure_count=0,
+                duration_ms=5.0,
+            )
+        ],
+        figures=[],
+    )
+    assert report["numeric_grounding_ratio"] == 1.0
+    assert report["passed"] is True

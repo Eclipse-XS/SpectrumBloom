@@ -6,10 +6,11 @@ SpectrumBloom is a modular monolith engineered for **local-first, secure, observ
 
 ```text
 +-------------------------------------------------------------------+
-|                     Streamlit UI (src/spectrumbloom/ui)            |
-|  5-tab studio: Overview -> Auto EDA -> Ask AI -> ML Lab -> Export |
+|        Angular 19 Workspace (frontend/, Nginx :8501 / dev :4200)  |
+|  Overview -> Explorer -> Auto EDA -> AI Analyst -> ML Lab -> Export|
+|  (Legacy Streamlit UI available via Compose legacy-ui on :8502)   |
 +---------------------------------+---------------------------------+
-                                  | HTTP / JSON (httpx + Bearer)
+                                  | HTTP / JSON (HttpClient + Bearer)
                                   v
 +-------------------------------------------------------------------+
 |                     FastAPI Layer (src/spectrumbloom/api)         |
@@ -67,3 +68,9 @@ SpectrumBloom is a modular monolith engineered for **local-first, secure, observ
   - Rejects disallowed imports, dunder attributes, reflection builtins (`getattr`, `eval`, `exec`, `open`), file I/O (`read_*`, `to_csv`, `to_pickle`), and pandas expression evaluation (`df.eval`, `df.query`).
   - DataFrames cross via PyArrow Parquet (with safe typed JSON fallback), never `pickle`.
   - Runs under `python -I` isolated mode with socket/DNS kill-switches, prefix-locked read-only `open()`, figure collection across `plotly_figures`, `_sb_last_expr`, and top-level figure bindings (`fig`), plus OS Kernel Job Objects (Windows) or POSIX `rlimit` + RSS watchdog (`strict_subprocess`).
+
+### 4. Production Angular 19 Frontend (`frontend/`)
+- **Workspace Modules (`frontend/src/app/`):** Standalone Angular 19 components and signal/service state management (`WorkspaceStateService`, `ThemeService`) organized into lazy-routed workspace views: `/onboarding`, `/overview`, `/explorer`, `/eda`, `/analyst`, `/ml`, `/reports`, `/sessions`, and `/settings`.
+- **Auth & Secret Handling:** `AuthTokenService` keeps `API_AUTH_TOKEN` strictly in an Angular signal in session memory (never written to `localStorage`, URL params, or built bundle assets). `AuthInterceptor` injects `Authorization: Bearer` headers only for relative `/api/*` requests or configured trusted API origins, triggering `AuthBannerComponent` ("API authentication required") on HTTP `401` challenges.
+- **Markdown XSS & Visualization Isolation:** `SafeMarkdownPipe` renders assistant responses with `marked` and sanitizes the HTML output through a `DOMPurify` tag/attribute allowlist. `PlotlyChartComponent` (`sb-plotly-chart`) lazily imports `plotly.js-dist-min` and adapts chart layouts across light/dark themes.
+- **Containerized Serving (`frontend/Dockerfile`, `frontend/nginx.conf`):** Built in a multi-stage Node 22 build and served by non-root `nginxinc/nginx-unprivileged:1.27-alpine` on port `8501`, proxying `/api/` (with `proxy_pass_header Authorization` and `240s` read timeout) and `/health` over `app_net` to `api:8000`.
