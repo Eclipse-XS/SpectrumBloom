@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 
 from spectrumbloom.core.security import verify_api_token
+from spectrumbloom.domain.exceptions import DatasetValidationError
 from spectrumbloom.domain.schemas import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -103,10 +104,36 @@ def get_session_history(
 )
 async def upload_dataset(
     session_id: str,
+    request: Request,
     file: UploadFile = File(...),
     service: SpectrumBloomService = Depends(get_service),
 ) -> FullEDAReportResponse:
-    content = await file.read()
+    max_bytes = service.settings.max_upload_bytes
+    max_mb = max_bytes / (1024 * 1024)
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            declared_bytes = int(content_length)
+        except ValueError:
+            declared_bytes = 0
+        # Allow small multipart framing overhead (64 KB), reject obviously oversized bodies upfront
+        if declared_bytes > max_bytes + 65536:
+            raise DatasetValidationError(f"Uploaded payload exceeds the {max_mb:.1f} MB limit.")
+
+    chunks: list[bytes] = []
+    total_read = 0
+    chunk_size = 64 * 1024
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total_read += len(chunk)
+        if total_read > max_bytes:
+            chunks.clear()
+            raise DatasetValidationError(f"Uploaded file exceeds the {max_mb:.1f} MB limit.")
+        chunks.append(chunk)
+
+    content = b"".join(chunks)
     return service.upload_dataset(
         session_id=session_id,
         filename=file.filename or "dataset.csv",
@@ -162,4 +189,8 @@ def query_agent(
     body: QueryRequest,
     service: SpectrumBloomService = Depends(get_service),
 ) -> QueryResponse:
-    return service.run_query(session_id=session_id, query=body.query)
+    return service.run_query(
+        session_id=session_id,
+        query=body.query,
+        client_turn_id=body.client_turn_id,
+    )

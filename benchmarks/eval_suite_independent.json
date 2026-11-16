@@ -1,0 +1,254 @@
+[
+  {
+    "id": "ind_diab_01_profile",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "profiling",
+    "thread_group": "ind_diab_s01",
+    "turn_index": 1,
+    "prompt": "How many rows, columns, and missing cells are in the diabetes clinical progression dataset?",
+    "assertion": {"op": "shape_and_missing"}
+  },
+  {
+    "id": "ind_diab_02_missing",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "missingness",
+    "thread_group": "ind_diab_s02",
+    "turn_index": 1,
+    "prompt": "Which columns in diabetes_clinical_progression.csv have missing values, and how many missing values does each have?",
+    "assertion": {"op": "missing_map"}
+  },
+  {
+    "id": "ind_diab_03_filter_cnt",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "filtering",
+    "thread_group": "ind_diab_s03",
+    "turn_index": 1,
+    "prompt": "How many patient records have bmi_tier == 'obese'?",
+    "assertion": {"op": "filtered_count", "filters": [["bmi_tier", "==", "obese"]]}
+  },
+  {
+    "id": "ind_diab_04_filter_agg",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "filtering",
+    "thread_group": "ind_diab_s04",
+    "turn_index": 1,
+    "prompt": "For patients with high_bp == True, what is the mean disease_progression?",
+    "assertion": {"op": "filtered_agg", "filters": [["high_bp", "==", true]], "metric": "disease_progression", "agg": "mean"}
+  },
+  {
+    "id": "ind_diab_05_group_all",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "aggregation",
+    "thread_group": "ind_diab_s05",
+    "turn_index": 1,
+    "prompt": "Report the mean disease_progression for every bmi_tier.",
+    "assertion": {"op": "groupby_all", "group_by": "bmi_tier", "metric": "disease_progression", "agg": "mean"}
+  },
+  {
+    "id": "ind_diab_06_col_stats",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "aggregation",
+    "thread_group": "ind_diab_s06",
+    "turn_index": 1,
+    "prompt": "What are the mean and median of total_cholesterol?",
+    "assertion": {"op": "col_stats", "column": "total_cholesterol", "metrics": ["mean", "median"]}
+  },
+  {
+    "id": "ind_diab_07_corr",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "correlation",
+    "thread_group": "ind_diab_s07",
+    "turn_index": 1,
+    "prompt": "Compute the Pearson correlation between bmi and disease_progression.",
+    "assertion": {"op": "corr", "method": "pearson", "col_a": "bmi", "col_b": "disease_progression"}
+  },
+  {
+    "id": "ind_diab_08_outliers",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "outliers",
+    "thread_group": "ind_diab_s08",
+    "turn_index": 1,
+    "prompt": "Using the 1.5 * IQR rule on tch_ratio, how many outlier patient records are detected?",
+    "assertion": {"op": "outliers_iqr", "column": "tch_ratio"}
+  },
+  {
+    "id": "ind_diab_09_test",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "statistical_test",
+    "thread_group": "ind_diab_s09",
+    "turn_index": 1,
+    "prompt": "Run a Kruskal-Wallis test on disease_progression across bmi_tier and report the test statistic and p-value.",
+    "assertion": {"op": "group_test", "test": "kruskal", "metric": "disease_progression", "group": "bmi_tier"}
+  },
+  {
+    "id": "ind_diab_10_chart",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "visualization",
+    "thread_group": "ind_diab_s10",
+    "turn_index": 1,
+    "prompt": "Create a Plotly box plot of disease_progression grouped by bmi_tier.",
+    "assertion": {"op": "chart", "expected_chart_kinds": ["box"]}
+  },
+  {
+    "id": "ind_diab_11_diff",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "multi_step",
+    "thread_group": "ind_diab_s11",
+    "turn_index": 1,
+    "prompt": "Compute the mean disease_progression for bmi_tier 'obese' versus 'normal' and report the difference (obese mean minus normal mean).",
+    "assertion": {"op": "group_diff", "group_col": "bmi_tier", "metric": "disease_progression", "val_a": "obese", "val_b": "normal"}
+  },
+  {
+    "id": "ind_diab_12_mt1",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "multi_turn",
+    "thread_group": "ind_mt_diab",
+    "turn_index": 1,
+    "prompt": "Which bmi_tier has the highest mean bp, and what is that mean?",
+    "assertion": {"op": "groupby_top", "group_by": "bmi_tier", "metric": "bp", "agg": "mean"}
+  },
+  {
+    "id": "ind_diab_13_mt2",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "multi_turn",
+    "thread_group": "ind_mt_diab",
+    "turn_index": 2,
+    "prompt": "For that same bmi_tier, what is the median blood_glucose?",
+    "assertion": {"op": "top_group_metric", "group_by": "bmi_tier", "rank_metric": "bp", "rank_agg": "mean", "target_metric": "blood_glucose", "target_agg": "median"}
+  },
+  {
+    "id": "ind_diab_14_invalid",
+    "dataset": "diabetes_clinical_progression.csv",
+    "category": "invalid_input",
+    "thread_group": "ind_diab_s14",
+    "turn_index": 1,
+    "prompt": "Compute the mean of column insulin_pump_model.",
+    "assertion": {"op": "missing_column_handled", "bad_column": "insulin_pump_model"}
+  },
+  {
+    "id": "ind_grid_01_profile",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "profiling",
+    "thread_group": "ind_grid_s01",
+    "turn_index": 1,
+    "prompt": "How many rows, columns, and missing cells are in the grid substation telemetry dataset?",
+    "assertion": {"op": "shape_and_missing"}
+  },
+  {
+    "id": "ind_grid_02_missing",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "missingness",
+    "thread_group": "ind_grid_s02",
+    "turn_index": 1,
+    "prompt": "How many missing values are in harmonic_thd_pct?",
+    "assertion": {"op": "col_null_count", "column": "harmonic_thd_pct"}
+  },
+  {
+    "id": "ind_grid_03_filter_cnt",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "filtering",
+    "thread_group": "ind_grid_s03",
+    "turn_index": 1,
+    "prompt": "How many substation readings have alarm_tripped == True?",
+    "assertion": {"op": "filtered_count", "filters": [["alarm_tripped", "==", true]]}
+  },
+  {
+    "id": "ind_grid_04_filter_agg",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "filtering",
+    "thread_group": "ind_grid_s04",
+    "turn_index": 1,
+    "prompt": "For readings where load_mva >= 70, what is the mean winding_temp_c?",
+    "assertion": {"op": "filtered_agg", "filters": [["load_mva", ">=", 70]], "metric": "winding_temp_c", "agg": "mean"}
+  },
+  {
+    "id": "ind_grid_05_group_all",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "aggregation",
+    "thread_group": "ind_grid_s05",
+    "turn_index": 1,
+    "prompt": "Report the mean load_mva for each grid_zone.",
+    "assertion": {"op": "groupby_all", "group_by": "grid_zone", "metric": "load_mva", "agg": "mean"}
+  },
+  {
+    "id": "ind_grid_06_col_stats",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "aggregation",
+    "thread_group": "ind_grid_s06",
+    "turn_index": 1,
+    "prompt": "What are the minimum and maximum values of winding_temp_c?",
+    "assertion": {"op": "col_stats", "column": "winding_temp_c", "metrics": ["min", "max"]}
+  },
+  {
+    "id": "ind_grid_07_corr",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "correlation",
+    "thread_group": "ind_grid_s07",
+    "turn_index": 1,
+    "prompt": "Compute the Spearman correlation between load_mva and winding_temp_c.",
+    "assertion": {"op": "corr", "method": "spearman", "col_a": "load_mva", "col_b": "winding_temp_c"}
+  },
+  {
+    "id": "ind_grid_08_outliers",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "outliers",
+    "thread_group": "ind_grid_s08",
+    "turn_index": 1,
+    "prompt": "Using the 1.5 * IQR rule on harmonic_thd_pct, how many outlier readings are present?",
+    "assertion": {"op": "outliers_iqr", "column": "harmonic_thd_pct"}
+  },
+  {
+    "id": "ind_grid_09_normality",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "statistical_test",
+    "thread_group": "ind_grid_s09",
+    "turn_index": 1,
+    "prompt": "Run a Shapiro-Wilk normality test on harmonic_thd_pct and report the statistic and p-value.",
+    "assertion": {"op": "normality", "column": "harmonic_thd_pct"}
+  },
+  {
+    "id": "ind_grid_10_chart",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "visualization",
+    "thread_group": "ind_grid_s10",
+    "turn_index": 1,
+    "prompt": "Create a Plotly scatter plot with x='load_mva' and y='winding_temp_c'.",
+    "assertion": {"op": "chart", "expected_chart_kinds": ["scatter"]}
+  },
+  {
+    "id": "ind_grid_11_ratio",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "multi_step",
+    "thread_group": "ind_grid_s11",
+    "turn_index": 1,
+    "prompt": "Compute the ratio of mean load_mva in North_Grid to mean load_mva in Inland_Grid (North_Grid mean divided by Inland_Grid mean).",
+    "assertion": {"op": "group_ratio", "group_by": "grid_zone", "metric": "load_mva", "num_group": "North_Grid", "den_group": "Inland_Grid"}
+  },
+  {
+    "id": "ind_grid_12_mt1",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "multi_turn",
+    "thread_group": "ind_mt_grid",
+    "turn_index": 1,
+    "prompt": "Which grid_zone has the highest mean winding_temp_c, and what is that mean?",
+    "assertion": {"op": "groupby_top", "group_by": "grid_zone", "metric": "winding_temp_c", "agg": "mean"}
+  },
+  {
+    "id": "ind_grid_13_mt2",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "multi_turn",
+    "thread_group": "ind_mt_grid",
+    "turn_index": 2,
+    "prompt": "For that same grid_zone, what is the median load_mva?",
+    "assertion": {"op": "top_group_metric", "group_by": "grid_zone", "rank_metric": "winding_temp_c", "rank_agg": "mean", "target_metric": "load_mva", "target_agg": "median"}
+  },
+  {
+    "id": "ind_grid_14_invalid",
+    "dataset": "grid_substation_telemetry.csv",
+    "category": "invalid_input",
+    "thread_group": "ind_grid_s14",
+    "turn_index": 1,
+    "prompt": "What is the median of column transformer_oil_ppm?",
+    "assertion": {"op": "missing_column_handled", "bad_column": "transformer_oil_ppm"}
+  }
+]

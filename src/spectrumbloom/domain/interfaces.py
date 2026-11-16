@@ -16,7 +16,12 @@ class SessionRepository(Protocol):
 
     def get(self, session_id: str) -> SessionRecord | None: ...
 
-    def save(self, record: SessionRecord) -> SessionRecord: ...
+    def save(
+        self,
+        record: SessionRecord,
+        *,
+        expected_version: int | None = None,
+    ) -> SessionRecord: ...
 
     def list_all(self) -> list[SessionRecord]: ...
 

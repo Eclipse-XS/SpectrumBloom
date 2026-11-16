@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -30,10 +32,17 @@ class LocalFilesystemDatasetStore:
         safe_session = sanitize_filename(session_id)
         safe_name = sanitize_filename(filename)
         digest = hashlib.sha256(content).hexdigest()[:12]
-        rel_ref = f"{safe_session}/{digest}_{safe_name}"
+        nonce = uuid.uuid4().hex[:8]
+        rel_ref = f"{safe_session}/{digest}_{nonce}_{safe_name}"
         target = self._resolve_safe_path(rel_ref)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+        tmp_path = target.with_name(f".tmp_{uuid.uuid4().hex}_{target.name}")
+        try:
+            tmp_path.write_bytes(content)
+            os.replace(tmp_path, target)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
         return rel_ref
 
     def get_bytes(self, storage_ref: str) -> bytes:
@@ -98,7 +107,8 @@ class S3CompatibleDatasetStore:
         safe_session = sanitize_filename(session_id)
         safe_name = sanitize_filename(filename)
         digest = hashlib.sha256(content).hexdigest()[:12]
-        key = f"{self.prefix}/{safe_session}/{digest}_{safe_name}"
+        nonce = uuid.uuid4().hex[:8]
+        key = f"{self.prefix}/{safe_session}/{digest}_{nonce}_{safe_name}"
         content_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
         self._client.put_object(
             Bucket=self.bucket,

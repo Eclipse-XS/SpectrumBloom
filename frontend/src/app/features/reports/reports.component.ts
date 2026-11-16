@@ -264,7 +264,7 @@ import { slugifyFilename } from '../../shared/utils/format.utils';
           <div class="format-icon"><sb-svg-icon name="chart" [size]="16" /><b>HTML</b></div>
           <div>
             <h3>Interactive Plotly figure</h3>
-            <p>Standalone interactive HTML viewer containing real Plotly traces from EDA, AI Analyst, or ML Lab.</p>
+            <p>Standalone HTML viewer containing real Plotly traces from EDA, AI Analyst, or ML Lab (loads Plotly from CDN with built-in offline trace/JSON fallback).</p>
             @if (figures().length === 0) {
               <small class="unavail-note">No Plotly figures exist in the active session yet.</small>
             } @else {
@@ -349,9 +349,15 @@ export class ReportsComponent {
 
   downloadEda(): void {
     const report = this.state.edaReport();
-    if (!report) return;
+    const sid = this.state.activeSessionId();
+    const ds = this.state.datasetMeta();
+    if (!report || !sid) return;
     const base = slugifyFilename(report.profile.filename.replace(/\.[^.]+$/, ''), 'dataset');
-    downloadJson(`${base}_eda_report.json`, report);
+    downloadJson(`${base}_eda_report.json`, {
+      session_id: sid,
+      dataset_sha256: ds?.sha256 ?? null,
+      ...report,
+    });
     this.state.showToast(`${base}_eda_report.json downloaded.`);
   }
 
@@ -379,16 +385,25 @@ export class ReportsComponent {
 
   downloadMl(): void {
     const res = this.state.mlResult();
-    if (!res) return;
+    const sid = this.state.activeSessionId();
+    const ds = this.state.datasetMeta();
+    if (!res || !sid) return;
     const base = slugifyFilename(res.target_column, 'ml_experiment');
-    downloadJson(`ml_${base}_results.json`, res);
+    downloadJson(`ml_${base}_results.json`, {
+      session_id: sid,
+      dataset_sha256: ds?.sha256 ?? null,
+      ...res,
+    });
     this.state.showToast(`ml_${base}_results.json downloaded.`);
   }
 
   downloadFigureHtml(): void {
     const fig = this.selectedFigure();
     if (!fig) return;
-    downloadPlotlyHtml(fig);
+    downloadPlotlyHtml(fig, {
+      sessionId: this.state.activeSessionId(),
+      datasetFilename: this.state.datasetMeta()?.filename ?? null,
+    });
     this.state.showToast(`${slugifyFilename(fig.title)}.html downloaded.`);
   }
 }

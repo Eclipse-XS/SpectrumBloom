@@ -156,8 +156,15 @@ export class SpectrumBloomApiService {
       );
   }
 
-  queryAgent(sessionId: string, query: string): Observable<QueryResponse> {
-    const body: QueryRequest = { query };
+  queryAgent(
+    sessionId: string,
+    query: string,
+    clientTurnId?: string | null,
+  ): Observable<QueryResponse> {
+    const body: QueryRequest = {
+      query,
+      ...(clientTurnId ? { client_turn_id: clientTurnId } : {}),
+    };
     return this.http
       .post<QueryResponse>(
         this.auth.resolveUrl(`/api/v1/sessions/${encodeURIComponent(sessionId)}/query`),

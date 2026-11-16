@@ -13,6 +13,14 @@ export default defineConfig({
   workers: 1,
   retries: process.env['CI'] ? 1 : 0,
   reporter: [['list']],
+  webServer: process.env['PLAYWRIGHT_SKIP_WEBSERVER'] === '1'
+    ? undefined
+    : {
+        command: 'npx ng serve --port 4200 --proxy-config proxy.conf.json',
+        url: baseURL,
+        reuseExistingServer: true,
+        timeout: 120_000,
+      },
   use: {
     baseURL,
     trace: 'retain-on-failure',

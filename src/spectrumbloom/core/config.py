@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     local_dataset_dir: Path = Path("./data/datasets")
     max_upload_mb: int = Field(default=25, ge=1, le=250)
     session_ttl_seconds: int = Field(default=86400, ge=60)
+    max_cached_sessions: int = Field(default=128, ge=1, le=4096)
     redis_url: str = ""
 
     # Optional S3-compatible object storage (MinIO, R2, GCS interop, S3)

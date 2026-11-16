@@ -651,3 +651,224 @@ def test_deterministic_eval_grounds_unicode_scientific_notation() -> None:
     )
     assert report["numeric_grounding_ratio"] == 1.0
     assert report["passed"] is True
+
+
+def test_benchmark_regressions_for_evaluator_defects_and_analytical_guards() -> None:
+    """Focused regression tests for P1 benchmark failures and evaluator defects."""
+    from pathlib import Path
+
+    import pandas as pd
+    import pytest
+
+    from spectrumbloom.agent.deterministic_tools import (
+        format_statistical_focus,
+        run_aggregate_data,
+    )
+    from spectrumbloom.eda.profiler import profile_dataframe
+    from spectrumbloom.eda.statistics import compute_statistics
+    from spectrumbloom.optimization.workflow_benchmark import (
+        _extract_numbers_from_text,
+        _verify_task_against_ground_truth,
+    )
+
+    datasets_dir = Path(__file__).resolve().parents[2] / "benchmarks" / "datasets"
+    wine_df = pd.read_csv(datasets_dir / "wine_cultivars_uci.csv")
+    macro_df = pd.read_csv(datasets_dir / "us_macro_fred.csv")
+    co2_df = pd.read_csv(datasets_dir / "mauna_loa_co2.csv")
+
+    # 1. wine_09_mt1: valid 'class_2 = 0.781' response with digit in entity name and ', with...'
+    wine_09_task = {
+        "id": "wine_09_mt1",
+        "prompt": "Which cultivar has the lowest mean flavanoids, and what is that mean?",
+        "assertion": {
+            "op": "groupby_bottom",
+            "group_by": "cultivar",
+            "metric": "flavanoids",
+            "agg": "mean",
+        },
+    }
+    ok_wine09, reason_wine09 = _verify_task_against_ground_truth(
+        wine_09_task,
+        wine_df,
+        (
+            "The cultivar with the lowest mean flavanoids is **class_2**, "
+            "with a mean flavanoids value of **0.781**."
+        ),
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_wine09 is True, reason_wine09
+
+    # Confirm wrong entity association for class_0 / class_2 still fails strictly
+    ok_wine09_bad, _ = _verify_task_against_ground_truth(
+        wine_09_task,
+        wine_df,
+        "The cultivar with the lowest mean flavanoids is class_0 (0.781), while class_2 is 2.982.",
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_wine09_bad is False
+
+    # 2. macro_06_normality: correctly rounded scientific notation using superscript exponents
+    assert _extract_numbers_from_text("p-value: 9 × 10⁻⁶") == [pytest.approx(9e-6)]
+    macro_06_task = {
+        "id": "macro_06_normality",
+        "prompt": "Run a normality test on unemp and report its statistic and p-value.",
+        "assertion": {"op": "normality", "column": "unemp"},
+    }
+    ok_macro06, reason_macro06 = _verify_task_against_ground_truth(
+        macro_06_task,
+        macro_df,
+        (
+            "The Shapiro-Wilk normality test on **unemp** yields:\n"
+            "- **Test Statistic**: 0.95736\n- **p-value**: 9 × 10⁻⁶"
+        ),
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_macro06 is True, reason_macro06
+
+    # Confirm non-significant p-value (e.g. 0.004) does NOT pass when true p-value is ~8.9e-6
+    ok_macro06_bad_p, _ = _verify_task_against_ground_truth(
+        macro_06_task,
+        macro_df,
+        "Test Statistic: 0.95736, p-value: 0.004",
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_macro06_bad_p is False
+
+    # 3. co2_01_profile: prompt only asks for rows and columns, not missing values
+    co2_01_task = {
+        "id": "co2_01_profile",
+        "prompt": "How many rows and columns are in the Mauna Loa CO2 dataset?",
+        "assertion": {"op": "shape_and_missing"},
+    }
+    ok_co2_01, reason_co2_01 = _verify_task_against_ground_truth(
+        co2_01_task,
+        co2_df,
+        "The Mauna Loa CO2 dataset contains **2,284 rows** and **3 columns**.",
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_co2_01 is True, reason_co2_01
+
+    # When prompt DOES ask for missing values, omitting missing count still fails
+    co2_missing_req_task = {
+        "id": "co2_01_with_missing",
+        "prompt": "How many rows, columns, and missing values are in the Mauna Loa CO2 dataset?",
+        "assertion": {"op": "shape_and_missing"},
+    }
+    ok_co2_missing_omitted, _ = _verify_task_against_ground_truth(
+        co2_missing_req_task,
+        co2_df,
+        "The Mauna Loa CO2 dataset contains 2,284 rows and 3 columns.",
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_co2_missing_omitted is False
+
+    # 4. wine_01_profile guard: nunique of the grouping column itself is rejected with guidance
+    with pytest.raises(ValueError, match="agg_func='count'"):
+        run_aggregate_data(
+            wine_df,
+            metric_column="cultivar",
+            agg_func="nunique",
+            group_by="cultivar",
+        )
+
+    # 5. wine_04_corr & wrong statistical method rejection:
+    wine_04_task = {
+        "id": "wine_04_corr",
+        "prompt": "Compute the Spearman correlation between total_phenols and flavanoids.",
+        "assertion": {
+            "op": "corr",
+            "method": "spearman",
+            "col_a": "total_phenols",
+            "col_b": "flavanoids",
+        },
+    }
+    # Claiming Pearson when Spearman was requested fails
+    ok_wrong_method_text, reason_wm = _verify_task_against_ground_truth(
+        wine_04_task,
+        wine_df,
+        "The Pearson correlation is 0.883.",
+        "success",
+        [],
+        [],
+        {},
+    )
+    assert ok_wrong_method_text is False
+    assert "wrong_statistical_method" in reason_wm
+
+    # Calling Pearson in tool trace when Spearman was requested fails even if number matches
+    ok_wrong_method_trace, reason_wmt = _verify_task_against_ground_truth(
+        wine_04_task,
+        wine_df,
+        "The correlation is 0.883.",
+        "success",
+        [],
+        [
+            {
+                "tool": "compute_statistical_test",
+                "result": {"test_type": "pearson", "correlation": 0.864564},
+                "error": None,
+            }
+        ],
+        {},
+    )
+    assert ok_wrong_method_trace is False
+    assert "wrong_statistical_method" in reason_wmt
+
+    # Also verify format_statistical_focus includes pairwise correlations when columns are passed
+    wine_prof = profile_dataframe(wine_df, filename="wine_cultivars_uci.csv")
+    wine_rep = compute_statistics(wine_df, wine_prof)
+    focused = format_statistical_focus(
+        wine_df, wine_prof, wine_rep, focus="correlations", columns=["total_phenols", "flavanoids"]
+    )
+    assert len(focused["correlations"]) == 1
+    assert focused["correlations"][0]["spearman_rho"] == pytest.approx(0.8794, abs=1e-4)
+
+    # 6. hold_co2_04_diff guard: grouping by year on Mauna Loa CO2 (44 years) returns all 44 years
+    # instead of truncating 1965 out at limit=20
+    co2_by_year = run_aggregate_data(
+        co2_df,
+        metric_column="co2",
+        agg_func="mean",
+        group_by="year",
+        limit=20,
+    )
+    assert "1965" in co2_by_year["mapping"]
+    assert "1995" in co2_by_year["mapping"]
+    diff_95_65 = co2_by_year["mapping"]["1995"] - co2_by_year["mapping"]["1965"]
+    assert diff_95_65 == pytest.approx(40.865385, abs=1e-3)
+
+    # 7. Numerical grounding audit: arbitrary number from profile_context does NOT ground tool turn
+    ungrounded_from_profile = evaluate_turn_deterministically(
+        query="What is the mean co2?",
+        answer="The mean co2 is 522.0.",
+        tool_traces=[
+            ToolTraceItem(
+                tool="aggregate_data",
+                stdout="",
+                result={"value": 360.8},
+            )
+        ],
+        figures=[],
+        profile_context="Dataset has 522 rows and 5 columns.",
+        status="success",
+    )
+    assert ungrounded_from_profile["numeric_grounding_ratio"] == 0.0
+    assert ungrounded_from_profile["passed"] is False

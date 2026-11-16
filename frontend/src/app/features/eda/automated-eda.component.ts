@@ -670,14 +670,23 @@ export class AutomatedEdaComponent {
   }
 
   downloadHtml(fig: FigurePayload): void {
-    downloadPlotlyHtml(fig);
+    downloadPlotlyHtml(fig, {
+      sessionId: this.state.activeSessionId(),
+      datasetFilename: this.state.datasetMeta()?.filename ?? null,
+    });
   }
 
   exportEdaReport(): void {
     const report = this.state.edaReport();
-    if (!report) return;
+    const sid = this.state.activeSessionId();
+    const ds = this.state.datasetMeta();
+    if (!report || !sid) return;
     const base = slugifyFilename(report.profile.filename.replace(/\.[^.]+$/, ''), 'dataset');
-    downloadJson(`${base}_eda_report.json`, report);
+    downloadJson(`${base}_eda_report.json`, {
+      session_id: sid,
+      dataset_sha256: ds?.sha256 ?? null,
+      ...report,
+    });
     this.state.showToast(`${base}_eda_report.json downloaded.`);
   }
 

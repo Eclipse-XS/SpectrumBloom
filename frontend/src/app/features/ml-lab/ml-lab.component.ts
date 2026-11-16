@@ -516,14 +516,23 @@ export class MlLabComponent {
   }
 
   downloadHtml(fig: FigurePayload): void {
-    downloadPlotlyHtml(fig);
+    downloadPlotlyHtml(fig, {
+      sessionId: this.state.activeSessionId(),
+      datasetFilename: this.state.datasetMeta()?.filename ?? null,
+    });
   }
 
   exportMlJson(): void {
     const res = this.mlResult();
-    if (!res) return;
+    const sid = this.state.activeSessionId();
+    const ds = this.state.datasetMeta();
+    if (!res || !sid) return;
     const base = slugifyFilename(res.target_column, 'ml_experiment');
-    downloadJson(`ml_${base}_results.json`, res);
+    downloadJson(`ml_${base}_results.json`, {
+      session_id: sid,
+      dataset_sha256: ds?.sha256 ?? null,
+      ...res,
+    });
     this.state.showToast(`ml_${base}_results.json downloaded.`);
   }
 

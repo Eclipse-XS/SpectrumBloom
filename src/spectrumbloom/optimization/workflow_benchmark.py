@@ -28,7 +28,19 @@ from spectrumbloom.eda.charts import validate_plotly_figure_payload
 from spectrumbloom.main import create_app
 from spectrumbloom.services.session_service import SpectrumBloomService
 
-_NUM_TOKEN_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?")
+_SUP_MAP = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻", "0123456789+-")
+_SCI_WITH_COEFF_RE = re.compile(
+    r"([-+]?\d+(?:\.\d+)?)\s*[×xX*·⋅]\s*10"
+    r"(?:(?:\*\*|\^)\s*([-+]?\d+)|([⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+))"
+)
+_SCI_BARE_TEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])10"
+    r"(?:(?:\*\*|\^)\s*([-+]?\d+)|([⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+))"
+)
+_NUM_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])[-+]?\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?(?![A-Za-z0-9_]|\.\d)"
+)
+_STANDALONE_NUM_RE = re.compile(r"(?<![A-Za-z0-9_])[-+]?\d[\d,]*(?:\.\d+)?(?![A-Za-z0-9_])")
 _STAT_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
     "mean": ("mean", "average", "avg"),
     "median": ("median",),
@@ -38,9 +50,30 @@ _STAT_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+_SUB_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+
+
+def _normalize_scientific_notation(text: str) -> str:
+    normalized = re.sub(
+        r"([A-Za-z_])([₀₁₂₃₄₅₆₇₈₉]+)",
+        lambda m: f"{m.group(1)}{m.group(2).translate(_SUB_MAP)}",
+        text,
+    )
+    normalized = _SCI_WITH_COEFF_RE.sub(
+        lambda m: f"{m.group(1)}e{(m.group(2) or m.group(3)).translate(_SUP_MAP)}",
+        normalized,
+    )
+    normalized = _SCI_BARE_TEN_RE.sub(
+        lambda m: f"1e{(m.group(1) or m.group(2)).translate(_SUP_MAP)}",
+        normalized,
+    )
+    return normalized
+
+
 def _extract_numbers_from_text(text: str) -> list[float]:
     values: list[float] = []
-    for tok in _NUM_TOKEN_RE.findall(text):
+    normalized = _normalize_scientific_notation(text or "")
+    for tok in _NUM_TOKEN_RE.findall(normalized):
         cleaned = tok.replace(",", "")
         try:
             val = float(cleaned)
@@ -73,20 +106,22 @@ def _strip_markdown(text: str) -> str:
 
 
 def _split_clauses_preserving_intro(segment: str) -> list[str]:
-    """Split comparative clauses while keeping 'For West, mean age is 43.15' together."""
+    """Split comparative clauses while keeping entity introductions and participial tails intact."""
     pieces: list[str] = []
     start = 0
     for match in re.finditer(r",\s+|\s+and\s+", segment, flags=re.IGNORECASE):
         left = segment[start : match.start()]
         right = segment[match.end() :].lstrip()
-        # Keep anaphoric main clauses ('for quarters with year >= 2000, it is 5.415') intact.
+        # Keep anaphoric or participial value-continuation clauses attached to the preceding clause.
         if re.search(
-            r"^(?:it|they|this|that|there|which|where|respectively|the\s+(?:mean|median|sum|total|value|rate|count))\b",
+            r"^(?:it|they|this|that|there|which|where|respectively|with\b|at\b|"
+            r"averaging\b|having\b|equal\s+to\b|the\s+(?:mean|median|sum|total|value|rate|count))\b",
             right,
             flags=re.IGNORECASE,
         ):
             continue
-        if re.search(r"\d|[:=]", left):
+        # Only split when `left` already contains a standalone number or `:`/`=`.
+        if _STANDALONE_NUM_RE.search(left) or re.search(r"[:=]", left):
             pieces.append(left.strip())
             start = match.end()
     tail = segment[start:].strip()
@@ -237,27 +272,31 @@ def _verify_task_against_ground_truth(
     if op == "shape_and_dups":
         rows, cols = df.shape
         dups = int(df.duplicated().sum())
-        ok = (
-            _text_matches_number(ans_clean, rows, rel_tol=0.0, abs_tol=0.5)
-            and _text_matches_number(ans_clean, cols, rel_tol=0.0, abs_tol=0.5)
-            and (
-                _text_matches_number(ans_clean, dups, rel_tol=0.0, abs_tol=0.5)
-                or (dups == 0 and ("no duplicate" in ans_lower or "zero duplicate" in ans_lower))
-            )
+        prompt_low = str(task.get("prompt", "")).lower()
+        asks_dups = any(k in prompt_low for k in ("duplicate", "dup"))
+        has_shape = _text_matches_number(ans_clean, rows, rel_tol=0.0, abs_tol=0.5) and (
+            _text_matches_number(ans_clean, cols, rel_tol=0.0, abs_tol=0.5)
         )
+        has_dups = _text_matches_number(ans_clean, dups, rel_tol=0.0, abs_tol=0.5) or (
+            dups == 0 and ("no duplicate" in ans_lower or "zero duplicate" in ans_lower)
+        )
+        ok = has_shape and (has_dups if asks_dups else True)
         return ok, "ok" if ok else f"expected rows={rows}, cols={cols}, dups={dups}"
 
     if op == "shape_and_missing":
         rows, cols = df.shape
         miss = int(df.isna().sum().sum())
-        ok = (
-            _text_matches_number(ans_clean, rows, rel_tol=0.0, abs_tol=0.5)
-            and _text_matches_number(ans_clean, cols, rel_tol=0.0, abs_tol=0.5)
-            and (
-                _text_matches_number(ans_clean, miss, rel_tol=0.0, abs_tol=0.5)
-                or (miss == 0 and ("no missing" in ans_lower or "zero missing" in ans_lower))
-            )
+        prompt_low = str(task.get("prompt", "")).lower()
+        asks_missing = bool(
+            re.search(r"\b(?:missing|null|nulls|na|nan|completeness|incomplete)\b", prompt_low)
         )
+        has_shape = _text_matches_number(ans_clean, rows, rel_tol=0.0, abs_tol=0.5) and (
+            _text_matches_number(ans_clean, cols, rel_tol=0.0, abs_tol=0.5)
+        )
+        has_miss = _text_matches_number(ans_clean, miss, rel_tol=0.0, abs_tol=0.5) or (
+            miss == 0 and ("no missing" in ans_lower or "zero missing" in ans_lower)
+        )
+        ok = has_shape and (has_miss if asks_missing else True)
         return ok, "ok" if ok else f"expected rows={rows}, cols={cols}, miss={miss}"
 
     if op == "missing_map":
@@ -368,7 +407,26 @@ def _verify_task_against_ground_truth(
                 "b": pd.to_numeric(df[spec["col_b"]], errors="coerce"),
             }
         ).dropna()
-        fn = stats.pearsonr if spec["method"] == "pearson" else stats.spearmanr
+        req_method = str(spec["method"]).lower()
+        wrong_method = "pearson" if req_method == "spearman" else "spearman"
+        # Reject if the answer explicitly claims the wrong correlation method
+        if wrong_method in ans_lower and req_method not in ans_lower:
+            return False, f"wrong_statistical_method:claimed_{wrong_method}_instead_of_{req_method}"
+        # Reject if compute_statistical_test used the wrong correlation method
+        if _traces:
+            stat_methods = {
+                str((t.get("result") or {}).get("test_type") or "").lower()
+                for t in _traces
+                if t.get("tool") == "compute_statistical_test"
+                and not t.get("error")
+                and isinstance(t.get("result"), dict)
+            }
+            if wrong_method in stat_methods and req_method not in stat_methods:
+                return (
+                    False,
+                    f"wrong_statistical_method:executed_{wrong_method}_instead_of_{req_method}",
+                )
+        fn = stats.pearsonr if req_method == "pearson" else stats.spearmanr
         r_val = float(fn(pair["a"].to_numpy(), pair["b"].to_numpy()).statistic)
         ok = _text_matches_number(ans_clean, r_val, rel_tol=0.01, abs_tol=0.005)
         return ok, "ok" if ok else f"expected r={round(r_val, 4)}"
@@ -398,7 +456,22 @@ def _verify_task_against_ground_truth(
         else:
             groups = [grp["v"].to_numpy() for _, grp in sub.groupby("g", observed=True)]
             stat_v, p_v = stats.kruskal(*groups)
-        has_p = _text_matches_number(ans_clean, float(p_v), rel_tol=0.02, abs_tol=0.002)
+        req_test = str(spec["test"]).lower()
+        if _traces:
+            stat_methods = {
+                str((t.get("result") or {}).get("test_type") or "").lower()
+                for t in _traces
+                if t.get("tool") == "compute_statistical_test"
+                and not t.get("error")
+                and isinstance(t.get("result"), dict)
+            }
+            if stat_methods and req_test not in stat_methods:
+                return (
+                    False,
+                    f"wrong_statistical_method:executed_{sorted(stat_methods)}_instead_of_{req_test}",
+                )
+        p_abs_tol = 1e-6 if float(p_v) < 0.01 else 0.002
+        has_p = _text_matches_number(ans_clean, float(p_v), rel_tol=0.06, abs_tol=p_abs_tol)
         asks_stat = "stat" in str(task.get("prompt", "")).lower()
         has_stat = _text_matches_number(ans_clean, float(stat_v), rel_tol=0.01, abs_tol=0.05)
         ok = has_p and (has_stat if asks_stat else True)
@@ -407,8 +480,11 @@ def _verify_task_against_ground_truth(
     if op == "normality":
         s = pd.to_numeric(df[spec["column"]], errors="coerce").dropna()
         stat_v, p_v = stats.shapiro(s) if len(s) <= 5000 else stats.normaltest(s)
+        # Allow 6% relative tolerance on p-value so 1-sig-fig scientific notation passes,
+        # while keeping abs_tol tight for small p-values so non-significant p-values never match 0.
+        p_abs_tol = 1e-6 if float(p_v) < 0.01 else 0.005
         ok = _text_matches_number(ans_clean, float(stat_v), rel_tol=0.01, abs_tol=0.02) and (
-            _text_matches_number(ans_clean, float(p_v), rel_tol=0.02, abs_tol=0.005)
+            _text_matches_number(ans_clean, float(p_v), rel_tol=0.06, abs_tol=p_abs_tol)
         )
         return ok, "ok" if ok else f"expected stat={round(float(stat_v), 4)}, p={float(p_v):.4g}"
 

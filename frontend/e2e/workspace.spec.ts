@@ -197,7 +197,7 @@ test.describe('SpectrumBloom Live FastAPI + Angular Workspace E2E', () => {
     // 8. Sessions: create disposable session & switch back
     await page.getByRole('link', { name: 'Sessions' }).click();
     await page.waitForURL('**/sessions');
-    await expect(page.locator('.session-row')).toHaveCount(await page.locator('.session-row').count());
+    await expect(page.locator('.session-item').first()).toBeVisible();
 
     expect(consoleErrors).toEqual([]);
     expect(pageErrors).toEqual([]);

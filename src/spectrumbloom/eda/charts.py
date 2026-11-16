@@ -90,8 +90,14 @@ def build_standard_chart(
 ) -> dict[str, Any]:
     """Deterministically build and validate a standard Plotly visualization from exact columns."""
     available = [str(c) for c in df.columns]
+    if chart_type != "heatmap" and not x:
+        raise ValueError(
+            f"Chart type '{chart_type}' requires an 'x' column. Available: {available}"
+        )
     for col_arg, label in ((x, "x"), (y, "y"), (color, "color")):
-        if col_arg is not None and col_arg not in df.columns:
+        if chart_type == "heatmap" and label in {"x", "y"}:
+            continue
+        if col_arg and col_arg not in df.columns:
             raise ValueError(f"Column '{col_arg}' for '{label}' not found. Available: {available}")
 
     if chart_type == "histogram":
@@ -197,7 +203,16 @@ def build_standard_chart(
         resolved_title = title.strip() or f"{y} vs {x}"
         fn = px.scatter if chart_type == "scatter" else px.line
         fig = fn(plot_df, x=x, y=y, color=color, labels={x: x, y: y})
-        return _encode_figure(fig, resolved_title, chart_type)
+        fig_payload = _encode_figure(fig, resolved_title, chart_type)
+        fig_payload["rows_total"] = int(len(df))
+        fig_payload["rows_plotted"] = int(len(plot_df))
+        try:
+            fig_payload["x_min"] = str(plot_df[x].min())
+            fig_payload["x_max"] = str(plot_df[x].max())
+        except TypeError:
+            fig_payload["x_min"] = str(plot_df[x].iloc[0])
+            fig_payload["x_max"] = str(plot_df[x].iloc[-1])
+        return fig_payload
 
     if chart_type == "heatmap":
         num_cols = [

@@ -207,14 +207,27 @@ def run_aggregate_data(
     elif agg_func == "nunique":
         if metric_col is None:
             raise ValueError("Aggregation 'nunique' requires 'metric_column'.")
+        if metric_col in group_cols:
+            raise ValueError(
+                f"Invalid aggregation: 'nunique' of grouping column '{metric_col}' grouped by "
+                f"'{metric_col}' is trivially 1 for every group. To count the number of rows/"
+                f"samples in each '{metric_col}' group, call aggregate_data with "
+                f"agg_func='count', group_by='{metric_col}', metric_column=None."
+            )
         series = grouped_obj[metric_col].nunique(dropna=True)
     else:
         series = getattr(grouped_obj[metric_col], agg_func)()
 
-    res_df = series.reset_index(name="value")
-    if pd.api.types.is_float_dtype(res_df["value"]):
-        res_df["value"] = res_df["value"].round(6)
-    res_df = res_df.sort_values("value", ascending=not sort_desc).head(max(1, min(limit, 100)))
+    full_res_df = series.reset_index(name="value")
+    if pd.api.types.is_float_dtype(full_res_df["value"]):
+        full_res_df["value"] = full_res_df["value"].round(6)
+    total_groups = int(len(full_res_df))
+    effective_limit = max(1, min(limit, 100))
+    # If grouped by a single column with moderate cardinality (<= 60 groups, e.g. years/states),
+    # return all groups up to 60 so specific target groups are not silently truncated at 20.
+    if len(group_cols) == 1 and total_groups <= 60 and effective_limit < total_groups:
+        effective_limit = total_groups
+    res_df = full_res_df.sort_values("value", ascending=not sort_desc).head(effective_limit)
 
     groups_list = res_df.to_dict(orient="records")
     mapping = (
@@ -222,19 +235,21 @@ def run_aggregate_data(
         if len(group_cols) == 1
         else None
     )
-    return sanitize_json_payload(
-        {
-            "rows_matched": rows_matched,
-            "total_dataset_rows": int(len(df)),
-            "filters_applied": filters_applied,
-            "nulls_excluded": nulls_excluded,
-            "agg_func": agg_func,
-            "metric_column": metric_col,
-            "group_by": group_cols,
-            "groups": groups_list,
-            "mapping": mapping,
-        }
-    )
+    payload: dict[str, Any] = {
+        "rows_matched": rows_matched,
+        "total_dataset_rows": int(len(df)),
+        "filters_applied": filters_applied,
+        "nulls_excluded": nulls_excluded,
+        "agg_func": agg_func,
+        "metric_column": metric_col,
+        "group_by": group_cols,
+        "total_groups": total_groups,
+        "groups": groups_list if len(groups_list) <= 20 else groups_list[:20],
+        "mapping": mapping,
+    }
+    if len(groups_list) < total_groups:
+        payload["truncated_to_limit"] = len(groups_list)
+    return sanitize_json_payload(payload)
 
 
 def run_statistical_test(
@@ -458,14 +473,48 @@ def format_statistical_focus(
         missing = [
             m for m in report.missingness.columns_with_missing if m.get("column") in valid_cols
         ]
+        col_set = set(valid_cols)
+        if len(col_set) >= 2:
+            matching_corrs = [
+                c.model_dump()
+                for c in report.top_correlations
+                if c.column_a in col_set and c.column_b in col_set
+            ]
+        else:
+            matching_corrs = [
+                c.model_dump()
+                for c in report.top_correlations
+                if c.column_a in col_set or c.column_b in col_set
+            ][:15]
         return sanitize_json_payload(
             {
                 "columns": col_profiles,
                 "missingness": missing,
                 "outliers": outliers,
                 "normality_checks": normality,
+                "correlations": matching_corrs,
             }
         )
+
+    def _compact_col(cp: Any) -> dict[str, Any]:
+        return {
+            "name": cp.name,
+            "dtype": cp.dtype,
+            "null_count": cp.null_count,
+            "unique_count": cp.unique_count,
+            "numeric_stats": (
+                {
+                    "mean": cp.numeric_stats.get("mean"),
+                    "std": cp.numeric_stats.get("std"),
+                    "min": cp.numeric_stats.get("min"),
+                    "median": cp.numeric_stats.get("median"),
+                    "max": cp.numeric_stats.get("max"),
+                }
+                if cp.numeric_stats
+                else None
+            ),
+            "top_values": cp.top_values[:2] if cp.top_values else None,
+        }
 
     data = report.model_dump()
     if focus == "profile":
@@ -478,36 +527,26 @@ def format_statistical_focus(
                 "duplicate_rows": profile.duplicate_rows,
                 "completeness_pct": profile.completeness_pct,
                 "warnings": profile.warnings,
-                "column_profiles": [
-                    {
-                        "name": cp.name,
-                        "dtype": cp.dtype,
-                        "semantic_type": cp.semantic_type,
-                        "null_count": cp.null_count,
-                        "null_pct": cp.null_pct,
-                        "unique_count": cp.unique_count,
-                        "numeric_stats": cp.numeric_stats,
-                        "top_values": cp.top_values[:5] if cp.top_values else None,
-                    }
-                    for cp in profile.column_profiles[:20]
-                ],
+                "columns_with_missing": report.missingness.columns_with_missing,
+                "column_profiles": [_compact_col(cp) for cp in profile.column_profiles[:15]],
             }
         )
 
     if focus == "all":
-        return sanitize_json_payload(
-            {
-                "shape": {"rows": profile.rows, "columns": profile.columns},
-                "completeness_pct": profile.completeness_pct,
-                "duplicate_rows": profile.duplicate_rows,
-                "missingness": data["missingness"],
-                "top_correlations": data["top_correlations"][:8],
-                "outliers": data["outliers"][:8],
-                "multivariate_anomalies": data["multivariate_anomaly_count"],
-                "normality_checks": data["normality_checks"][:8],
-                "group_tests": data["group_tests"][:5],
-            }
-        )
+        all_payload: dict[str, Any] = {
+            "shape": {"rows": profile.rows, "columns": profile.columns},
+            "completeness_pct": profile.completeness_pct,
+            "duplicate_rows": profile.duplicate_rows,
+            "missingness": data["missingness"],
+            "top_correlations": data["top_correlations"][:6],
+            "outliers": data["outliers"][:6],
+            "multivariate_anomalies": data["multivariate_anomaly_count"],
+            "normality_checks": data["normality_checks"][:6],
+            "group_tests": data["group_tests"][:4],
+        }
+        if len(profile.column_profiles) <= 12:
+            all_payload["column_profiles"] = [_compact_col(cp) for cp in profile.column_profiles]
+        return sanitize_json_payload(all_payload)
 
     key_map = {
         "missingness": "missingness",
@@ -523,5 +562,6 @@ def format_statistical_focus(
         raise ValueError(f"Unsupported focus '{focus}'.")
     val = data[section_key]
     if isinstance(val, list):
-        val = val[:15]
+        max_items = 30 if section_key == "top_correlations" else 15
+        val = val[:max_items]
     return sanitize_json_payload({section_key: val})

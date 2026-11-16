@@ -279,7 +279,7 @@ def compute_statistics(df: pd.DataFrame, profile: DatasetProfile) -> Statistical
         categorical_columns=cat_cols,
         pearson_matrix=pearson_matrix,
         spearman_matrix=spearman_matrix,
-        top_correlations=top_correlations[:15],
+        top_correlations=top_correlations[:25],
         categorical_associations=cat_associations[:10],
         outliers=outliers,
         multivariate_anomaly_count=multivariate_anomalies,

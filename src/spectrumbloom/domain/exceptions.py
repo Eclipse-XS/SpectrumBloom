@@ -11,6 +11,10 @@ class SessionNotFoundError(SpectrumBloomError):
     """Raised when a session ID does not exist or has expired."""
 
 
+class SessionConflictError(SpectrumBloomError):
+    """Raised when an optimistic concurrency check detects a stale session write."""
+
+
 class DatasetNotFoundError(SpectrumBloomError):
     """Raised when an expected dataset artifact is missing."""
 

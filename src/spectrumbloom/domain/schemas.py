@@ -35,6 +35,7 @@ class ChatMessageRecord(BaseModel):
     error: str | None = None
     latency_ms: float | None = None
     retries_used: int = 0
+    client_turn_id: str | None = Field(default=None, max_length=128)
 
 
 class ToolTraceItem(BaseModel):
@@ -53,6 +54,7 @@ class SessionRecord(BaseModel):
     thread_id: str
     provider: str
     model: str
+    version: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now_iso)
     updated_at: str = Field(default_factory=utc_now_iso)
     dataset: UploadedDatasetMeta | None = None
@@ -210,6 +212,7 @@ class SandboxExecutionResult(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=4000)
+    client_turn_id: str | None = Field(default=None, max_length=128)
 
 
 class QueryResponse(BaseModel):

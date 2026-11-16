@@ -48,10 +48,19 @@ import { formatDurationMs, formatTimestamp, slugifyFilename } from '../../shared
         min-height: 68px;
         padding: 10px 20px;
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         gap: 10px;
         border-bottom: 1px solid var(--border);
+      }
+      .analyst-head > div:first-child {
+        min-width: 0;
+      }
+      .analyst-head .eyebrow {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .analyst-head h1 {
         font-size: 19px;
@@ -60,6 +69,7 @@ import { formatDurationMs, formatTimestamp, slugifyFilename } from '../../shared
       }
       .analyst-head-actions {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         gap: 8px;
       }
@@ -298,6 +308,15 @@ import { formatDurationMs, formatTimestamp, slugifyFilename } from '../../shared
         .prompt-grid {
           grid-template-columns: 1fr;
         }
+        .analyst-head {
+          padding: 10px 14px;
+        }
+        .messages {
+          padding: 16px 14px;
+        }
+        .composer {
+          margin: 0 12px 12px;
+        }
       }
     `,
   ],
@@ -322,15 +341,31 @@ import { formatDurationMs, formatTimestamp, slugifyFilename } from '../../shared
             </div>
             <div class="analyst-head-actions">
               <sb-status-badge kind="neutral">{{ state.activeModel() }}</sb-status-badge>
-              @if (state.messages().length > 0) {
-                <button
-                  type="button"
-                  class="button sm"
-                  [disabled]="state.querying()"
-                  (click)="confirmClearChat()"
-                >
-                  Clear chat
-                </button>
+              @if (state.messages().length > 0 || state.querying()) {
+                @if (!confirmingClear()) {
+                  <button
+                    type="button"
+                    class="button sm"
+                    (click)="confirmingClear.set(true)"
+                  >
+                    Clear chat
+                  </button>
+                } @else {
+                  <button
+                    type="button"
+                    class="button sm danger"
+                    (click)="confirmClearChat()"
+                  >
+                    Confirm clear
+                  </button>
+                  <button
+                    type="button"
+                    class="button sm"
+                    (click)="confirmingClear.set(false)"
+                  >
+                    Cancel
+                  </button>
+                }
               }
               <button
                 type="button"
@@ -454,13 +489,16 @@ import { formatDurationMs, formatTimestamp, slugifyFilename } from '../../shared
                           }
 
                           @if (msg.evaluation; as ev) {
-                            <div class="eval-row">
+                            <div
+                              class="eval-row"
+                              title="Trace provenance checks compare reported numbers against executed tool outputs and query context; they do not prove standalone mathematical correctness."
+                            >
                               <sb-status-badge [kind]="evalOverallKind(ev)">
                                 {{ evalOverallLabel(ev) }}
                               </sb-status-badge>
                               @if (ev.numeric_grounding_ratio !== undefined) {
                                 <sb-status-badge [kind]="ev.numeric_grounding_passed ? 'success' : 'warning'">
-                                  Grounding: {{ (ev.numeric_grounding_ratio * 100).toFixed(0) }}%
+                                  Trace match: {{ (ev.numeric_grounding_ratio * 100).toFixed(0) }}%
                                 </sb-status-badge>
                               }
                               @if (ev.execution_pass_rate !== undefined) {
@@ -624,6 +662,7 @@ export class AiAnalystComponent {
   readonly promptText = signal<string>('');
   readonly expandedEvidence = signal<Set<number>>(new Set());
   readonly mobileShowCanvas = signal<boolean>(false);
+  readonly confirmingClear = signal<boolean>(false);
 
   readonly formatDurationMs = formatDurationMs;
   readonly formatTimestamp = formatTimestamp;
@@ -706,17 +745,22 @@ export class AiAnalystComponent {
   }
 
   retryFailedPrompt(): void {
-    const draft = this.state.failedPromptDraft() || this.promptText().trim();
+    const draft = this.state.failedPromptDraft();
     if (draft) {
-      this.submitPrompt(draft);
+      this.promptText.set('');
+      this.state.retryFailedPrompt();
+      return;
+    }
+    const text = this.promptText().trim();
+    if (text) {
+      this.submitPrompt(text);
     }
   }
 
   confirmClearChat(): void {
-    if (typeof window !== 'undefined' && window.confirm('Clear all conversation turns in this session? The dataset stays loaded.')) {
-      this.expandedEvidence.set(new Set());
-      this.state.clearMessages();
-    }
+    this.confirmingClear.set(false);
+    this.expandedEvidence.set(new Set());
+    this.state.clearMessages();
   }
 
   focusCanvasTurn(idx: number): void {
@@ -759,8 +803,8 @@ export class AiAnalystComponent {
   }
 
   evalOverallLabel(ev: EvaluationSummary): string {
-    if (ev.passed === true) return 'Verification passed';
-    if (ev.passed === false) return 'Verification flagged';
+    if (ev.passed === true) return 'Trace checks passed';
+    if (ev.passed === false) return 'Trace check flagged';
     return 'Not evaluated';
   }
 
@@ -774,7 +818,10 @@ export class AiAnalystComponent {
   }
 
   downloadHtml(fig: FigurePayload): void {
-    downloadPlotlyHtml(fig);
+    downloadPlotlyHtml(fig, {
+      sessionId: this.state.activeSessionId(),
+      datasetFilename: this.state.datasetMeta()?.filename ?? null,
+    });
   }
 
   goToOnboarding(): void {

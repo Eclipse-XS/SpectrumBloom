@@ -249,7 +249,10 @@ class StandardChartInput(BaseModel):
         ...,
         description="Plotly chart type to generate cleanly with validated axes and title.",
     )
-    x: str = Field(..., description="Exact column name for X axis (numeric column for heatmap).")
+    x: str = Field(
+        default="",
+        description="Exact column name for X axis (optional for heatmap).",
+    )
     y: str | None = Field(default=None, description="Optional exact column name for Y axis.")
     color: str | None = Field(default=None, description="Optional column name for color grouping.")
     agg_func: Literal["none", "count", "sum", "mean", "median"] = Field(
@@ -319,7 +322,7 @@ def get_agent_tools(*, include_python_repl: bool = True):
     @tool("create_standard_chart", args_schema=StandardChartInput)
     def standard_chart_tool(
         chart_type: str,
-        x: str,
+        x: str = "",
         y: str | None = None,
         color: str | None = None,
         agg_func: str = "none",

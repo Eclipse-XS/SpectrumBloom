@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from spectrumbloom import __version__
 from spectrumbloom.api.routes import router as api_router
 from spectrumbloom.core.config import Settings, get_settings
-from spectrumbloom.core.security import sanitize_json_payload
+from spectrumbloom.core.security import redact_secrets, sanitize_json_payload
 from spectrumbloom.core.telemetry import TelemetryRuntime
 from spectrumbloom.domain.exceptions import (
     DatasetNotFoundError,
@@ -25,6 +25,7 @@ from spectrumbloom.domain.exceptions import (
     MLExperimentError,
     SandboxTimeoutError,
     SandboxUnavailableError,
+    SessionConflictError,
     SessionNotFoundError,
 )
 from spectrumbloom.llm.providers import UnifiedLLMProvider
@@ -130,51 +131,81 @@ def create_app(
 
     telemetry.instrument_fastapi(app)
 
+    def _safe_error_detail(exc: Exception) -> str:
+        return redact_secrets(
+            str(exc),
+            extra_secrets=(
+                cfg.api_auth_token,
+                cfg.sandbox_executor_token,
+                cfg.openai_api_key,
+                cfg.gemini_api_key,
+                cfg.langfuse_secret_key,
+            ),
+        )
+
     # -- Exception handlers --------------------------------------------------
     @app.exception_handler(SessionNotFoundError)
     async def _handle_not_found(_req: Request, exc: SessionNotFoundError):
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND, content={"detail": _safe_error_detail(exc)}
+        )
+
+    @app.exception_handler(SessionConflictError)
+    async def _handle_conflict(_req: Request, exc: SessionConflictError):
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT, content={"detail": _safe_error_detail(exc)}
+        )
 
     @app.exception_handler(DatasetNotFoundError)
     async def _handle_dataset_missing(_req: Request, exc: DatasetNotFoundError):
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST, content={"detail": _safe_error_detail(exc)}
+        )
 
     @app.exception_handler(DatasetValidationError)
     async def _handle_dataset_invalid(_req: Request, exc: DatasetValidationError):
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST, content={"detail": _safe_error_detail(exc)}
+        )
 
     @app.exception_handler(MLExperimentError)
     async def _handle_ml_error(_req: Request, exc: MLExperimentError):
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": _safe_error_detail(exc)},
         )
 
     @app.exception_handler(LLMConfigurationError)
     async def _handle_llm_config(_req: Request, exc: LLMConfigurationError):
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST, content={"detail": _safe_error_detail(exc)}
+        )
 
     @app.exception_handler(SandboxTimeoutError)
     async def _handle_sandbox_timeout(_req: Request, exc: SandboxTimeoutError):
         return JSONResponse(
-            status_code=status.HTTP_408_REQUEST_TIMEOUT, content={"detail": str(exc)}
+            status_code=status.HTTP_408_REQUEST_TIMEOUT, content={"detail": _safe_error_detail(exc)}
         )
 
     @app.exception_handler(SandboxUnavailableError)
     async def _handle_sandbox_unavailable(_req: Request, exc: SandboxUnavailableError):
         return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)}
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": _safe_error_detail(exc)},
         )
 
     @app.exception_handler(LLMTimeoutError)
     async def _handle_llm_timeout(_req: Request, exc: LLMTimeoutError):
         return JSONResponse(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            content={"detail": str(exc)},
+            content={"detail": _safe_error_detail(exc)},
         )
 
     @app.exception_handler(LLMInvocationError)
     async def _handle_llm_error(_req: Request, exc: LLMInvocationError):
-        return JSONResponse(status_code=status.HTTP_502_BAD_GATEWAY, content={"detail": str(exc)})
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY, content={"detail": _safe_error_detail(exc)}
+        )
 
     app.include_router(api_router)
 

@@ -6,7 +6,7 @@ SpectrumBloom is a modular monolith engineered for **local-first, secure, observ
 
 ```text
 +-------------------------------------------------------------------+
-|        Angular 19 Workspace (frontend/, Nginx :8501 / dev :4200)  |
+|        Angular 22 Workspace (frontend/, Nginx :8501 / dev :4200)  |
 |  Overview -> Explorer -> Auto EDA -> AI Analyst -> ML Lab -> Export|
 |  (Legacy Streamlit UI available via Compose legacy-ui on :8502)   |
 +---------------------------------+---------------------------------+
@@ -14,13 +14,14 @@ SpectrumBloom is a modular monolith engineered for **local-first, secure, observ
                                   v
 +-------------------------------------------------------------------+
 |                     FastAPI Layer (src/spectrumbloom/api)         |
-|  - Bearer token guard, CORS policy, prod/host auth validation     |
+|  - Bearer token guard, CORS, 64 KB streaming upload limit check   |
 +---------------------------------+---------------------------------+
                                   |
                                   v
 +-------------------------------------------------------------------+
 |               Application Service (services/session_service.py)   |
-|  - Per-session RLock, EDA caching, Agent orchestration, Eval      |
+|  - Atomic staged upload/rollback, lock-first optimistic version   |
+|  - Bounded TTL/LRU runtime cache, turn idempotency, LangGraph sync|
 +--------+-----------------+-----------------+----------------------+
          |                 |                 |
          v                 v                 v
@@ -38,11 +39,10 @@ SpectrumBloom is a modular monolith engineered for **local-first, secure, observ
 
 ## Key Architectural Flows
 
-### 1. Upload & Deterministic EDA (`POST /api/v1/sessions/{id}/upload`)
-1. `eda.loader.parse_tabular_bytes` enforces byte-size caps (`MAX_UPLOAD_MB`), allowed extensions, UTF-8/CP1252/Latin-1 decoding, CSV delimiter sniffing, and OOXML/ODF zip-bomb protection before invoking `pandas` / `openpyxl`.
-2. `eda.profiler.profile_dataframe` infers semantic roles (`numeric_continuous`, `numeric_discrete`, `categorical`, `boolean`, `datetime`, `identifier`, `text`) and generates dataset quality warnings.
-3. `eda.statistics.compute_statistics` computes missingness co-occurrence, Pearson & Spearman correlations, Cramér's V categorical associations, Shapiro-Wilk / D'Agostino normality tests, IQR / Z-score / robust MAD outliers, `IsolationForest` multivariate anomalies, and Kruskal-Wallis group difference tests.
-4. `eda.charts.build_eda_figures` creates ready-to-render interactive Plotly visualizations.
+### 1. Atomic Upload & Deterministic EDA (`POST /api/v1/sessions/{id}/upload`)
+1. `api.routes` enforces `MAX_UPLOAD_MB` in `64 KB` streaming chunks before buffering the full upload in memory (aligned with Nginx `client_max_body_size 256M`), and `eda.loader.parse_tabular_bytes` enforces allowed extensions, UTF-8/CP1252/Latin-1 decoding, CSV delimiter sniffing, and OOXML/ODF zip-bomb protection before invoking `pandas` / `openpyxl`.
+2. `SpectrumBloomService.upload_dataset` stages storage writes (`{digest}_{nonce}_{safe_name}` via atomic `os.replace`), computes profiling (`eda.profiler.profile_dataframe`), statistics (`eda.statistics.compute_statistics`), and Plotly figures (`eda.charts.build_eda_figures`), and persists the updated `SessionRecord` with optimistic version checking (`expected_version`, Redis `WATCH`/`MULTI`/`EXEC`) inside per-session locking. Failures during storage, profiling, statistics, figure generation, or persistence roll back staged files and leave previous dataset metadata, EDA results, and conversation history intact; expired/excess entries in `_runtime_cache` are evicted by TTL and bounded LRU (`MAX_CACHED_SESSIONS`).
+3. Restored sessions (including Redis-backed restarts) re-seed LangGraph thread checkpoints via `EDAAgentGraph.seed_history_if_empty` and enforce `client_turn_id` idempotency to prevent duplicate turns on network retries.
 
 ### 2. Agentic EDA & Bounded Repair Loop (`POST /api/v1/sessions/{id}/query`)
 1. `EDAAgentGraph` injects the compact schema & profile summary into the system prompt so small local models (default `qwen3:4b-instruct` at `num_ctx=4096`) ground exact column names without extra discovery turns, and enforces explicit rules against reusing unfiltered profile metrics on conditional/filtered follow-up questions.
@@ -69,8 +69,8 @@ SpectrumBloom is a modular monolith engineered for **local-first, secure, observ
   - DataFrames cross via PyArrow Parquet (with safe typed JSON fallback), never `pickle`.
   - Runs under `python -I` isolated mode with socket/DNS kill-switches, prefix-locked read-only `open()`, figure collection across `plotly_figures`, `_sb_last_expr`, and top-level figure bindings (`fig`), plus OS Kernel Job Objects (Windows) or POSIX `rlimit` + RSS watchdog (`strict_subprocess`).
 
-### 4. Production Angular 19 Frontend (`frontend/`)
-- **Workspace Modules (`frontend/src/app/`):** Standalone Angular 19 components and signal/service state management (`WorkspaceStateService`, `ThemeService`) organized into lazy-routed workspace views: `/onboarding`, `/overview`, `/explorer`, `/eda`, `/analyst`, `/ml`, `/reports`, `/sessions`, and `/settings`.
-- **Auth & Secret Handling:** `AuthTokenService` keeps `API_AUTH_TOKEN` strictly in an Angular signal in session memory (never written to `localStorage`, URL params, or built bundle assets). `AuthInterceptor` injects `Authorization: Bearer` headers only for relative `/api/*` requests or configured trusted API origins, triggering `AuthBannerComponent` ("API authentication required") on HTTP `401` challenges.
-- **Markdown XSS & Visualization Isolation:** `SafeMarkdownPipe` renders assistant responses with `marked` and sanitizes the HTML output through a `DOMPurify` tag/attribute allowlist. `PlotlyChartComponent` (`sb-plotly-chart`) lazily imports `plotly.js-dist-min` and adapts chart layouts across light/dark themes.
-- **Containerized Serving (`frontend/Dockerfile`, `frontend/nginx.conf`):** Built in a multi-stage Node 22 build and served by non-root `nginxinc/nginx-unprivileged:1.27-alpine` on port `8501`, proxying `/api/` (with `proxy_pass_header Authorization` and `240s` read timeout) and `/health` over `app_net` to `api:8000`.
+### 4. Production Angular 22 Frontend (`frontend/`)
+- **Workspace Modules (`frontend/src/app/`):** Standalone Angular 22 components and operation-scoped signal/service state management (`WorkspaceStateService`, `ThemeService`) organized into lazy-routed workspace views: `/onboarding`, `/overview`, `/explorer`, `/eda`, `/analyst`, `/ml`, `/reports`, `/sessions`, and `/settings`. Cancellation subjects (`cancelUpload$`, `cancelQuery$`, `cancelMl$`, `cancelSessionLoads$`), operation IDs, `finalize()` cleanups, and session/SHA-256 ownership guards prevent stale cross-session results and permanent loading states, while `client_turn_id` + history reconciliation handle uncertain timeouts without duplicate turns.
+- **Auth & Security Boundary:** `AuthTokenService` keeps `API_AUTH_TOKEN` strictly in an Angular signal in session memory (never written to `localStorage`, URL params, or built bundle assets). `AuthInterceptor` injects `Authorization: Bearer` headers only for relative `/api/*` requests or configured trusted API origins, triggering `AuthBannerComponent` ("API authentication required") on HTTP `401` challenges. Note that the current shared `API_AUTH_TOKEN` protects local/single-tenant or trusted-team deployments and does not provide multi-user per-identity RBAC or tenant isolation.
+- **Markdown XSS, Offline Export & Visualization Isolation:** `SafeMarkdownPipe` renders assistant responses with `marked` and sanitizes the HTML output through a `DOMPurify` tag/attribute allowlist. `PlotlyChartComponent` (`sb-plotly-chart`) lazily imports `plotly.js-dist-min` and adapts chart layouts across light/dark themes. Standalone HTML figure exports attempt to bundle inline `plotly.min.js` for offline rendering and surface a clear external CDN fallback notice when bundled offline assets are unavailable.
+- **Containerized Serving (`frontend/Dockerfile`, `frontend/nginx.conf`):** Built in a multi-stage Node 22 build and served by non-root `nginxinc/nginx-unprivileged:1.27-alpine` on port `8501` (`client_max_body_size 256M`), proxying `/api/` (with `proxy_pass_header Authorization` and `240s` read timeout) and `/health` over `app_net` to `api:8000`.

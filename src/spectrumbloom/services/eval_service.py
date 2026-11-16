@@ -78,7 +78,11 @@ def evaluate_turn_deterministically(
     )
 
     # Check numeric grounding against successful tool outputs (current + prior thread turns,
-    # plus pairwise derived arithmetic) and query/profile context when applicable.
+    # plus pairwise derived arithmetic) and query numbers.
+    # NOTE: Do NOT include global `profile_context` numbers when tools were executed, because
+    # matching an arbitrary number from the dataset profile is not provenance that a tool-computed
+    # metric is grounded. Moreover, trace provenance measures consistency with tool outputs, not
+    # standalone mathematical proof of query intent.
     grounded_ratio = 1.0
     if non_empty_answer:
         trace_blob = " ".join(
@@ -99,13 +103,23 @@ def evaluate_turn_deterministically(
             r"(?:(?:\*\*|\^)\s*([-+]?\d+)|([⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+))"
         )
         num_pattern = (
-            r"(?<![A-Za-z0-9_.])[-+]?\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?(?![A-Za-z0-9_]|\.\d)"
+            r"(?<![A-Za-z0-9_.₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹])"
+            r"[-+]?\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?"
+            r"(?![A-Za-z0-9_₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹]|\.\d)"
         )
+        _sub_map = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
 
         def _extract_floats(blob: str) -> list[float]:
+            # Normalize chemical/math subscripts attached to words (e.g. CO₂ -> CO2) so they are
+            # treated as part of the identifier rather than standalone numbers.
+            normalized_blob = re.sub(
+                r"([A-Za-z_])([₀₁₂₃₄₅₆₇₈₉]+)",
+                lambda m: f"{m.group(1)}{m.group(2).translate(_sub_map)}",
+                blob,
+            )
             normalized_blob = _sci_with_coeff.sub(
                 lambda m: f"{m.group(1)}e{(m.group(2) or m.group(3)).translate(_sup_map)}",
-                blob,
+                normalized_blob,
             )
             normalized_blob = _sci_bare_ten.sub(
                 lambda m: f"1e{(m.group(1) or m.group(2)).translate(_sup_map)}",
@@ -119,7 +133,18 @@ def evaluate_turn_deterministically(
                     continue
             return vals
 
-        answer_nums = _extract_floats(answer)
+        def _matches_evidence(val: float, ev: float) -> bool:
+            abs_ev = abs(ev)
+            if abs_ev == 0.0:
+                return abs(val) <= 1e-6
+            if abs_ev < 0.01:
+                # Scientific notation / small p-values: allow 1-sig-fig rounding (~6% relative)
+                return abs(val - ev) <= max(1e-9, 0.06 * abs_ev)
+            if abs_ev < 1.0:
+                # Correlations, proportions, small metrics: 2% relative or 0.005 absolute
+                return abs(val - ev) <= max(0.005, 0.02 * abs_ev)
+            return abs(val - ev) <= max(0.05, 0.015 * abs_ev)
+
         trace_nums = _extract_floats(trace_blob)
         prior_nums = _extract_floats(prior_blob)
         calc_base = (
@@ -135,21 +160,25 @@ def evaluate_turn_deterministically(
                     b = calc_base[j]
                     derived_nums.extend((a - b, a + b))
                     if abs(b) > 1e-12:
-                        derived_nums.extend((a / b, (a / b) * 100.0))
+                        derived_nums.extend((a / b, (a / b) * 100.0, ((a - b) / b) * 100.0))
 
-        evidence_nums = (
-            trace_nums
-            + prior_nums
-            + derived_nums
-            + _extract_floats(profile_context)
-            + _extract_floats(query)
+        evidence_nums = trace_nums + prior_nums + derived_nums + _extract_floats(query)
+        standard_thresholds = {0.05, 0.01, 0.001} if (successful_tools > 0 or prior_nums) else set()
+        # Strip standard significance/confidence phrases ("5% significance level", "95% confidence")
+        # before extracting answer numbers so standard statistical conventions do not count as
+        # ungrounded dataset metrics, while bare numbers like "5" or "95" still require evidence.
+        answer_for_nums = re.sub(
+            r"\b(?:1|5|10|90|95|99)(?:\.0+)?\s*%\s*(?:significance|confidence|alpha|level)\b",
+            "",
+            answer,
+            flags=re.IGNORECASE,
         )
-        standard_thresholds = {0.05, 0.01} if total_tools > 0 else set()
+        answer_nums = _extract_floats(answer_for_nums)
         if answer_nums:
             matched = 0
             for val in answer_nums:
                 if val in standard_thresholds or any(
-                    abs(val - ev) <= max(0.05, 0.015 * abs(ev)) for ev in evidence_nums
+                    _matches_evidence(val, ev) for ev in evidence_nums
                 ):
                     matched += 1
             grounded_ratio = round(matched / len(answer_nums), 3)

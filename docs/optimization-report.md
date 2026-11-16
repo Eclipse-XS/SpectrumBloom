@@ -173,3 +173,23 @@ Following the 3-model baseline above, three targeted correctness fixes were appl
 - **Dev 67×2 (`100.0%` repeat pass agreement across Run 1 & Run 2):** `missingness` 3/3 (100.0%), `filtering` 6/6 (100.0%), `aggregation` 6/6 (100.0%), `outliers` 6/6 (100.0%), `visualization` 6/6 (100.0%), `invalid_input` 6/6 (100.0%), `multi_step` 3/3 (100.0%), `multi_turn` 11/12 (91.7%), `statistical_test` 6/7 (85.7%), `correlation` 5/6 (83.3%), `profiling` 4/6 (66.7%).
 - **Remaining 5 Dev failures (identical in Run 1 & Run 2):** `wine_01_profile`, `wine_04_corr`, `wine_09_mt1`, `macro_06_normality`, `co2_01_profile`. (Previously failing `ecom_10_mt2`, `bc_10_mt2`, `macro_08_multistep`, `macro_09_mt1`, and `macro_10_mt2` all passed in both runs.)
 - **Holdout 30 (`29/30 = 96.7%`):** `100.0%` across `profiling` (2/2), `missing_values` (1/1), `filtering` (6/6), `aggregation` (3/3), `statistical_test` (3/3), `outliers` (1/1), `visualization` (2/2), `invalid_input` (1/1), and `multi_turn` (6/6); `multi_step` scored 4/5 (80.0%) with a single remaining failure (`hold_co2_04_diff`).
+
+---
+
+## 7. Final Remediation & Independent Out-of-Dataset Evaluation (`2026-11-16`)
+
+Following architectural remediation of analytical tools (`deterministic_tools.py`, `charts.py`, `graph.py`, `prompts.py`) and evaluator false-negative/strictness defects (`eval_service.py`, `workflow_benchmark.py`)—plus creation of a 28-task out-of-dataset generalization suite (`benchmarks/eval_suite_independent.json`) on two unseen datasets (`diabetes_clinical_progression.csv`, `442×13`; `grid_substation_telemetry.csv`, `240×9`)—all three benchmarks were re-run on `qwen3:4b-instruct` (`DockerSandbox`, `num_ctx=4096`):
+
+| Suite | Run | Complete | Answer | Tool Exec | Tool Sel | Grounded | Chart | Retry Rate | Timeouts | P50 (s) | P95 (s) | Peak VRAM (MB) | Peak RAM (MB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Dev 67 Tasks (`latest_workflow_benchmark.json`) | 1 | **67/67 (100.0%)** | **67/67 (100.0%)** | **97.0%** | **100.0%** | **100.0%** | **100.0%** | 3.0% | 0 | 15.23 | 32.83 | 2353.0 | 338.66 |
+| Dev 67 Tasks (`latest_workflow_benchmark.json`) | 2 | **67/67 (100.0%)** | **67/67 (100.0%)** | **97.0%** | **100.0%** | **100.0%** | **100.0%** | 3.0% | 0 | 14.66 | 31.03 | 2353.0 | 337.02 |
+| Holdout 30 Tasks (`holdout_workflow_benchmark.json`) | 1 | **29/30 (96.7%)** | **30/30 (100.0%)** | **89.5%** | **100.0%** | 96.7% | **100.0%** | 10.0% | 0 | 14.16 | 34.59 | 2416.0 | 336.93 |
+| Independent 28 Tasks (`independent_workflow_benchmark.json`) | 1 | **27/28 (96.4%)** | **27/28 (96.4%)** | **96.3%** | **100.0%** | **100.0%** | **100.0%** | 3.6% | 0 | 10.02 | 19.27 | 2416.0 | 365.68 |
+| Independent 28 Tasks (`independent_workflow_benchmark.json`) | 2 | **27/28 (96.4%)** | **27/28 (96.4%)** | **96.3%** | **100.0%** | **100.0%** | **100.0%** | 3.6% | 0 | 10.87 | 23.54 | 2416.0 | 369.31 |
+
+### 7.1 Honest Failure & Groundedness Notes
+
+- **Holdout (`29/30` Complete, `30/30` Answer):** `hold_co2_05_chart` produced the correct histogram and answer (`final_answer_correct=True`, `chart_correct=True`), but failed deterministic grounding (`numeric_grounding_ratio=0.333`) after `1` retry when citing non-null row count `2225` because histogram chart traces defaulted `rows_plotted` to total table length (`2284`) instead of non-null series count.
+- **Independent Generalization (`27/28 × 2`):** Identical single failure in both repeats on `ind_grid_11_ratio`: the 4B model inferred from the 3-entry `top` category preview in the compact prompt that only three grid zones existed and omitted `"Inland_Grid"` (all 4 zones have 60 rows; `run_aggregate_data` computes all 4 accurately).
+- **Provenance vs. Mathematical Proof:** `numeric_grounding_ratio` verifies numeric consistency against successful tool outputs (`trace_blob`, `prior_blob`, and pairwise derived arithmetic—excluding raw `profile_context` whenever tools ran). Correctness is independently enforced by ground-truth CSV assertions and entity-value pairing checks (`workflow_benchmark.py`).

@@ -6,11 +6,12 @@ import threading
 import time
 from typing import Any
 
+from spectrumbloom.domain.exceptions import SessionConflictError, SessionNotFoundError
 from spectrumbloom.domain.schemas import SessionRecord
 
 
 class InMemorySessionRepository:
-    """Thread-safe in-memory session repository with TTL cleanup."""
+    """Thread-safe in-memory session repository with TTL cleanup and optimistic concurrency."""
 
     def __init__(self, ttl_seconds: int = 86400) -> None:
         self._ttl_seconds = max(60, ttl_seconds)
@@ -28,9 +29,11 @@ class InMemorySessionRepository:
     def create(self, record: SessionRecord) -> SessionRecord:
         with self._lock:
             self._evict_expired_locked()
-            self._records[record.session_id] = record.model_copy(deep=True)
-            self._expires_at[record.session_id] = time.monotonic() + self._ttl_seconds
-            return record.model_copy(deep=True)
+            to_store = record.model_copy(deep=True)
+            to_store.version = max(1, int(to_store.version))
+            self._records[to_store.session_id] = to_store
+            self._expires_at[to_store.session_id] = time.monotonic() + self._ttl_seconds
+            return to_store.model_copy(deep=True)
 
     def get(self, session_id: str) -> SessionRecord | None:
         with self._lock:
@@ -38,12 +41,35 @@ class InMemorySessionRepository:
             record = self._records.get(session_id)
             return record.model_copy(deep=True) if record is not None else None
 
-    def save(self, record: SessionRecord) -> SessionRecord:
+    def save(
+        self,
+        record: SessionRecord,
+        *,
+        expected_version: int | None = None,
+    ) -> SessionRecord:
         with self._lock:
             self._evict_expired_locked()
-            self._records[record.session_id] = record.model_copy(deep=True)
-            self._expires_at[record.session_id] = time.monotonic() + self._ttl_seconds
-            return record.model_copy(deep=True)
+            existing = self._records.get(record.session_id)
+            if expected_version is not None:
+                if existing is None:
+                    raise SessionNotFoundError(
+                        f"Session '{record.session_id}' does not exist or has expired."
+                    )
+                if existing.version != expected_version:
+                    raise SessionConflictError(
+                        f"Concurrent modification detected for session '{record.session_id}' "
+                        f"(expected version {expected_version}, found {existing.version})."
+                    )
+                next_version = expected_version + 1
+            else:
+                next_version = (
+                    (existing.version + 1) if existing is not None else max(1, record.version)
+                )
+            to_store = record.model_copy(deep=True)
+            to_store.version = next_version
+            self._records[to_store.session_id] = to_store
+            self._expires_at[to_store.session_id] = time.monotonic() + self._ttl_seconds
+            return to_store.model_copy(deep=True)
 
     def list_all(self) -> list[SessionRecord]:
         with self._lock:
@@ -64,7 +90,18 @@ class InMemorySessionRepository:
 class RedisSessionRepository:
     """Optional Redis-backed session repository (no mandatory dependency)."""
 
-    def __init__(self, redis_url: str, ttl_seconds: int = 86400) -> None:
+    def __init__(
+        self,
+        redis_url: str,
+        ttl_seconds: int = 86400,
+        *,
+        client: Any = None,
+    ) -> None:
+        self._ttl_seconds = max(60, ttl_seconds)
+        self._index_key = "spectrumbloom:sessions"
+        if client is not None:
+            self._client: Any = client
+            return
         try:
             import redis
         except ImportError as exc:
@@ -73,20 +110,25 @@ class RedisSessionRepository:
                 "Install with `uv pip install -e '.[redis]'`."
             ) from exc
 
-        self._ttl_seconds = max(60, ttl_seconds)
-        self._client: Any = redis.Redis.from_url(
+        self._client = redis.Redis.from_url(
             redis_url,
             decode_responses=True,
             socket_timeout=3.0,
             socket_connect_timeout=3.0,
         )
-        self._index_key = "spectrumbloom:sessions"
 
     def _key(self, session_id: str) -> str:
         return f"spectrumbloom:session:{session_id}"
 
     def create(self, record: SessionRecord) -> SessionRecord:
-        return self.save(record)
+        to_store = record.model_copy(deep=True)
+        to_store.version = max(1, int(to_store.version))
+        payload = to_store.model_dump_json()
+        pipe = self._client.pipeline()
+        pipe.set(self._key(to_store.session_id), payload, ex=self._ttl_seconds)
+        pipe.sadd(self._index_key, to_store.session_id)
+        pipe.execute()
+        return to_store.model_copy(deep=True)
 
     def get(self, session_id: str) -> SessionRecord | None:
         raw = self._client.get(self._key(session_id))
@@ -94,13 +136,65 @@ class RedisSessionRepository:
             return None
         return SessionRecord.model_validate_json(raw)
 
-    def save(self, record: SessionRecord) -> SessionRecord:
-        payload = record.model_dump_json()
-        pipe = self._client.pipeline()
-        pipe.set(self._key(record.session_id), payload, ex=self._ttl_seconds)
-        pipe.sadd(self._index_key, record.session_id)
-        pipe.execute()
-        return record.model_copy(deep=True)
+    def save(
+        self,
+        record: SessionRecord,
+        *,
+        expected_version: int | None = None,
+    ) -> SessionRecord:
+        key = self._key(record.session_id)
+        if expected_version is None:
+            to_store = record.model_copy(deep=True)
+            existing = self.get(record.session_id)
+            to_store.version = (
+                (existing.version + 1) if existing is not None else max(1, to_store.version)
+            )
+            payload = to_store.model_dump_json()
+            pipe = self._client.pipeline()
+            pipe.set(key, payload, ex=self._ttl_seconds)
+            pipe.sadd(self._index_key, to_store.session_id)
+            pipe.execute()
+            return to_store.model_copy(deep=True)
+
+        try:
+            import redis
+
+            watch_err_cls: type[Exception] = redis.WatchError
+        except ImportError:
+
+            class _FallbackWatchError(Exception):
+                pass
+
+            watch_err_cls = _FallbackWatchError
+
+        with self._client.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                if not raw:
+                    raise SessionNotFoundError(
+                        f"Session '{record.session_id}' does not exist or has expired."
+                    )
+                current = SessionRecord.model_validate_json(raw)
+                if current.version != expected_version:
+                    raise SessionConflictError(
+                        f"Concurrent modification detected for session '{record.session_id}' "
+                        f"(expected version {expected_version}, found {current.version})."
+                    )
+                to_store = record.model_copy(deep=True)
+                to_store.version = expected_version + 1
+                payload = to_store.model_dump_json()
+                pipe.multi()
+                pipe.set(key, payload, ex=self._ttl_seconds)
+                pipe.sadd(self._index_key, to_store.session_id)
+                pipe.execute()
+                return to_store.model_copy(deep=True)
+            except (SessionNotFoundError, SessionConflictError):
+                raise
+            except watch_err_cls as exc:
+                raise SessionConflictError(
+                    f"Concurrent Redis modification detected for session '{record.session_id}'."
+                ) from exc
 
     def list_all(self) -> list[SessionRecord]:
         session_ids = sorted(self._client.smembers(self._index_key))

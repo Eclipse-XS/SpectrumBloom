@@ -65,6 +65,7 @@ export interface ChatMessageRecord {
   error: string | null;
   latency_ms: number | null;
   retries_used: number;
+  client_turn_id?: string | null;
 }
 
 export interface CreateSessionRequest {
@@ -246,6 +247,7 @@ export interface FullEDAReportResponse {
 
 export interface QueryRequest {
   query: string;
+  client_turn_id?: string | null;
 }
 
 export interface QueryResponse {

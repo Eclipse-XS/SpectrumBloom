@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { WorkspaceStateService } from '../../core/state/workspace-state.service';
 import { PageHeaderComponent } from '../../shared/components/page-header.component';
@@ -120,27 +120,61 @@ import { formatInteger, formatTimestamp } from '../../shared/utils/format.utils'
               <div class="session-actions">
                 @if (sess.session_id === state.activeSessionId()) {
                   <sb-status-badge kind="success">Active</sb-status-badge>
-                  <button
-                    type="button"
-                    class="button sm"
-                    [disabled]="sess.message_count === 0"
-                    (click)="clearActive()"
-                  >
-                    Clear chat
-                  </button>
+                  @if (confirmingClearId() !== sess.session_id) {
+                    <button
+                      type="button"
+                      class="button sm"
+                      [disabled]="sess.message_count === 0 && !state.querying()"
+                      (click)="confirmingClearId.set(sess.session_id)"
+                    >
+                      Clear chat
+                    </button>
+                  } @else {
+                    <button
+                      type="button"
+                      class="button sm danger"
+                      (click)="clearActive()"
+                    >
+                      Confirm clear
+                    </button>
+                    <button
+                      type="button"
+                      class="button sm"
+                      (click)="confirmingClearId.set(null)"
+                    >
+                      Cancel
+                    </button>
+                  }
                 } @else {
                   <button type="button" class="button sm primary" (click)="switchTo(sess.session_id, sess.has_data)">
                     Switch to session
                   </button>
                 }
-                <button
-                  type="button"
-                  class="button sm danger"
-                  (click)="confirmDelete(sess.session_id)"
-                >
-                  <sb-svg-icon name="trash" [size]="14" />
-                  Delete
-                </button>
+                @if (confirmingDeleteId() !== sess.session_id) {
+                  <button
+                    type="button"
+                    class="button sm danger"
+                    (click)="confirmingDeleteId.set(sess.session_id)"
+                  >
+                    <sb-svg-icon name="trash" [size]="14" />
+                    Delete
+                  </button>
+                } @else {
+                  <button
+                    type="button"
+                    class="button sm danger"
+                    (click)="confirmDelete(sess.session_id)"
+                  >
+                    Confirm delete
+                  </button>
+                  <button
+                    type="button"
+                    class="button sm"
+                    (click)="confirmingDeleteId.set(null)"
+                  >
+                    Cancel
+                  </button>
+                }
               </div>
             </article>
           }
@@ -155,6 +189,8 @@ export class SessionsComponent {
 
   readonly formatInteger = formatInteger;
   readonly formatTimestamp = formatTimestamp;
+  readonly confirmingDeleteId = signal<string | null>(null);
+  readonly confirmingClearId = signal<string | null>(null);
 
   createSession(): void {
     this.state.createNewSession({}, () => {
@@ -169,14 +205,12 @@ export class SessionsComponent {
   }
 
   clearActive(): void {
-    if (typeof window !== 'undefined' && window.confirm('Clear chat history in the active session?')) {
-      this.state.clearMessages();
-    }
+    this.confirmingClearId.set(null);
+    this.state.clearMessages();
   }
 
   confirmDelete(sessionId: string): void {
-    if (typeof window !== 'undefined' && window.confirm(`Delete session ${sessionId.slice(0, 8)} and its uploaded dataset?`)) {
-      this.state.deleteSession(sessionId);
-    }
+    this.confirmingDeleteId.set(null);
+    this.state.deleteSession(sessionId);
   }
 }

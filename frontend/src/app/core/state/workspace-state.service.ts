@@ -1,5 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { Subject, forkJoin, of, switchMap, takeUntil, tap } from 'rxjs';
+import { Observable, Subject, finalize, forkJoin, map, of, switchMap, takeUntil, throwError } from 'rxjs';
 import { SpectrumBloomApiService } from '../api/spectrum-bloom-api.service';
 import { AuthTokenService } from '../auth/auth-token.service';
 import {
@@ -30,7 +30,16 @@ export class WorkspaceStateService {
   private readonly auth = inject(AuthTokenService);
 
   private readonly cancelSessionLoads$ = new Subject<void>();
+  private readonly cancelUpload$ = new Subject<void>();
   private readonly cancelQuery$ = new Subject<void>();
+  private readonly cancelMl$ = new Subject<void>();
+
+  private sessionLoadOpId = 0;
+  private uploadOpId = 0;
+  private queryOpId = 0;
+  private mlOpId = 0;
+  private lastFailedTurnId: string | null = null;
+  private lastFailedPromptText = '';
   private toastSeq = 0;
 
   private readonly _health = signal<HealthResponse | null>(null);
@@ -119,6 +128,11 @@ export class WorkspaceStateService {
   });
 
   readonly allExportableFigures = computed<FigurePayload[]>(() => {
+    const sid = this._activeSession()?.session_id;
+    const sha = this._activeSession()?.dataset?.sha256;
+    if (!sid || !sha || !this.hasData()) {
+      return [];
+    }
     const collected: FigurePayload[] = [];
     const seen = new Set<string>();
     const add = (fig: FigurePayload) => {
@@ -178,9 +192,16 @@ export class WorkspaceStateService {
   }
 
   private bootstrapSession(): void {
+    const bootEpoch = this.sessionLoadOpId;
     this.api.listSessions().subscribe({
       next: (sessions) => {
         this._sessions.set(sessions);
+        // Never overwrite an active session or cancel a user-initiated upload that started
+        // while initial session discovery was still in flight.
+        if (this._uploading() || this._activeSession() || this.sessionLoadOpId !== bootEpoch) {
+          this._initializing.set(false);
+          return;
+        }
         const savedId = this.readSavedSessionId();
         const match =
           (savedId && sessions.find((s) => s.session_id === savedId)) || sessions[0] || null;
@@ -219,44 +240,64 @@ export class WorkspaceStateService {
 
   createNewSession(req: CreateSessionRequest = {}, onDone?: () => void): void {
     this.cancelInFlightSessionWork();
-    this.api.createSession(req).subscribe({
-      next: (created) => {
-        this.saveSessionId(created.session_id);
-        this.clearDatasetViewState();
-        this.api.getSession(created.session_id).subscribe({
-          next: (status) => {
-            this._activeSession.set(status);
-            this.refreshSessions();
-            this.showToast('Started a new workspace session.');
-            onDone?.();
-          },
-          error: () => {
-            this._activeSession.set({
-              session_id: created.session_id,
-              thread_id: created.thread_id,
-              provider: created.provider,
-              model: created.model,
-              has_data: false,
-              message_count: 0,
-              figure_count: 0,
-              dataset: null,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
+    const opId = ++this.sessionLoadOpId;
+    this.api
+      .createSession(req)
+      .pipe(takeUntil(this.cancelSessionLoads$))
+      .subscribe({
+        next: (created) => {
+          if (this.sessionLoadOpId !== opId) {
+            return;
+          }
+          this.saveSessionId(created.session_id);
+          this.clearDatasetViewState();
+          this.api
+            .getSession(created.session_id)
+            .pipe(takeUntil(this.cancelSessionLoads$))
+            .subscribe({
+              next: (status) => {
+                if (this.sessionLoadOpId !== opId) {
+                  return;
+                }
+                this._activeSession.set(status);
+                this.refreshSessions();
+                this.showToast('Started a new workspace session.');
+                onDone?.();
+              },
+              error: () => {
+                if (this.sessionLoadOpId !== opId) {
+                  return;
+                }
+                this._activeSession.set({
+                  session_id: created.session_id,
+                  thread_id: created.thread_id,
+                  provider: created.provider,
+                  model: created.model,
+                  has_data: false,
+                  message_count: 0,
+                  figure_count: 0,
+                  dataset: null,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                });
+                this.refreshSessions();
+                onDone?.();
+              },
             });
-            this.refreshSessions();
-            onDone?.();
-          },
-        });
-      },
-      error: (err: ApiError) => {
-        this.showToast(err.detail, 'error');
-        onDone?.();
-      },
-    });
+        },
+        error: (err: ApiError) => {
+          if (this.sessionLoadOpId !== opId) {
+            return;
+          }
+          this.showToast(err.detail, 'error');
+          onDone?.();
+        },
+      });
   }
 
   selectSession(sessionId: string, onDone?: () => void): void {
     this.cancelInFlightSessionWork();
+    const opId = ++this.sessionLoadOpId;
     this.saveSessionId(sessionId);
     this.clearDatasetViewState();
     this._loadingDataset.set(true);
@@ -266,25 +307,36 @@ export class WorkspaceStateService {
       .pipe(
         takeUntil(this.cancelSessionLoads$),
         switchMap((status) => {
-          this._activeSession.set(status);
+          if (this.sessionLoadOpId === opId) {
+            this._activeSession.set(status);
+          }
           return forkJoin({
             history: this.api.getHistory(sessionId),
             eda: status.has_data ? this.api.getFullEda(sessionId) : of(null),
             preview: status.has_data ? this.api.getDataPreview(sessionId, 100) : of(null),
           });
         }),
+        finalize(() => {
+          if (this.sessionLoadOpId === opId) {
+            this._loadingDataset.set(false);
+          }
+        }),
       )
       .subscribe({
         next: ({ history, eda, preview }) => {
+          if (this.sessionLoadOpId !== opId || this._activeSession()?.session_id !== sessionId) {
+            return;
+          }
           this._messages.set(history.messages);
           this.selectLatestAssistantWithArtifacts(history.messages);
           this._edaReport.set(eda);
           this._preview.set(preview);
-          this._loadingDataset.set(false);
           onDone?.();
         },
         error: (err: ApiError) => {
-          this._loadingDataset.set(false);
+          if (this.sessionLoadOpId !== opId) {
+            return;
+          }
           if (err.kind === 'not_found') {
             this.clearSavedSessionId();
             this.bootstrapSession();
@@ -297,92 +349,104 @@ export class WorkspaceStateService {
   }
 
   uploadFile(file: File, onSuccess?: () => void): void {
-    this._uploadError.set(null);
-    const maxMb = this.maxUploadMb();
-    const maxBytes = maxMb * 1024 * 1024;
-    if (file.size > maxBytes) {
-      this._uploadError.set(`File exceeds the configured backend limit of ${maxMb} MB.`);
-      return;
-    }
-
-    const ensureSession = this._activeSession()?.session_id;
-    if (!ensureSession) {
-      this.api.createSession().subscribe({
-        next: (created) => {
-          this.saveSessionId(created.session_id);
-          this.executeUpload(created.session_id, file, onSuccess);
-        },
-        error: (err: ApiError) => {
-          this._uploadError.set(err.detail);
-        },
-      });
-      return;
-    }
-    this.executeUpload(ensureSession, file, onSuccess);
+    this.startUploadWorkflow(of(file), file.name, onSuccess);
   }
 
   loadSampleDataset(onSuccess?: () => void): void {
-    this._uploadError.set(null);
-    this._uploading.set(true);
-    this._uploadingFilename.set('sample_ecommerce.csv');
-    this.api.fetchSampleEcommerceFile().subscribe({
-      next: (sampleFile) => {
-        const sid = this._activeSession()?.session_id;
-        if (!sid) {
-          this.api.createSession().subscribe({
-            next: (created) => {
-              this.saveSessionId(created.session_id);
-              this.executeUpload(created.session_id, sampleFile, onSuccess);
-            },
-            error: (err: ApiError) => {
-              this._uploading.set(false);
-              this._uploadError.set(err.detail);
-            },
-          });
-        } else {
-          this.executeUpload(sid, sampleFile, onSuccess);
-        }
-      },
-      error: (err: ApiError) => {
-        this._uploading.set(false);
-        this._uploadError.set(err.detail);
-      },
-    });
+    this.startUploadWorkflow(
+      this.api.fetchSampleEcommerceFile(),
+      'sample_ecommerce.csv',
+      onSuccess,
+    );
   }
 
-  private executeUpload(sessionId: string, file: File, onSuccess?: () => void): void {
-    this.cancelInFlightSessionWork();
+  private startUploadWorkflow(
+    fileSource$: Observable<File>,
+    initialFilename: string,
+    onSuccess?: () => void,
+  ): void {
+    const opId = ++this.uploadOpId;
+    this.cancelUpload$.next();
+    this.cancelActiveAnalyticalWork();
     this._uploading.set(true);
-    this._uploadingFilename.set(file.name);
+    this._uploadingFilename.set(initialFilename);
     this._uploadError.set(null);
     this._queryError.set(null);
     this._mlError.set(null);
 
-    this.api
-      .uploadDataset(sessionId, file)
+    fileSource$
       .pipe(
+        switchMap((file) => {
+          const maxMb = this.maxUploadMb();
+          if (file.size > maxMb * 1024 * 1024) {
+            return throwError(
+              () =>
+                ({
+                  status: 413,
+                  kind: 'validation',
+                  detail: `File exceeds the configured backend limit of ${maxMb} MB.`,
+                }) satisfies ApiError,
+            );
+          }
+          this._uploadingFilename.set(file.name);
+          const existingSid = this._activeSession()?.session_id;
+          const sessionId$ = existingSid
+            ? of(existingSid)
+            : this.api.createSession().pipe(
+                map((created) => {
+                  if (this.uploadOpId === opId) {
+                    this.saveSessionId(created.session_id);
+                  }
+                  return created.session_id;
+                }),
+              );
+          return sessionId$.pipe(
+            switchMap((sessionId) =>
+              this.api.uploadDataset(sessionId, file).pipe(
+                switchMap((edaReport) =>
+                  forkJoin({
+                    sessionId: of(sessionId),
+                    fileName: of(file.name),
+                    edaReport: of(edaReport),
+                    session: this.api.getSession(sessionId),
+                    preview: this.api.getDataPreview(sessionId, 100),
+                  }),
+                ),
+              ),
+            ),
+          );
+        }),
+        takeUntil(this.cancelUpload$),
         takeUntil(this.cancelSessionLoads$),
-        switchMap((edaReport) => {
-          this._edaReport.set(edaReport);
-          this._messages.set([]);
-          this._selectedCanvasMessageIndex.set(null);
-          return forkJoin({
-            session: this.api.getSession(sessionId),
-            preview: this.api.getDataPreview(sessionId, 100),
-          });
+        finalize(() => {
+          if (this.uploadOpId === opId) {
+            this._uploading.set(false);
+            this._uploadingFilename.set('');
+          }
         }),
       )
       .subscribe({
-        next: ({ session, preview }) => {
+        next: ({ sessionId, fileName, edaReport, session, preview }) => {
+          if (this.uploadOpId !== opId) {
+            return;
+          }
+          const currentSid = this._activeSession()?.session_id;
+          if (currentSid && currentSid !== sessionId) {
+            return;
+          }
+          this._edaReport.set(edaReport);
+          this._messages.set([]);
+          this._selectedCanvasMessageIndex.set(null);
           this._activeSession.set(session);
           this._preview.set(preview);
-          this._uploading.set(false);
           this.refreshSessions();
-          this.showToast(`Profiled ${file.name} (${session.dataset?.rows ?? 0} rows).`);
+          this.showToast(`Profiled ${fileName} (${session.dataset?.rows ?? 0} rows).`);
           onSuccess?.();
         },
         error: (err: ApiError) => {
-          this._uploading.set(false);
+          if (this.uploadOpId !== opId) {
+            return;
+          }
           this._uploadError.set(err.detail);
           this.showToast(err.detail, 'error');
         },
@@ -391,35 +455,60 @@ export class WorkspaceStateService {
 
   refreshEda(): void {
     const sid = this._activeSession()?.session_id;
+    const sha = this._activeSession()?.dataset?.sha256;
     if (!sid || !this.hasData()) {
       return;
     }
+    const opId = ++this.sessionLoadOpId;
     this._loadingDataset.set(true);
     forkJoin({
       eda: this.api.getFullEda(sid),
       preview: this.api.getDataPreview(sid, 100),
     })
-      .pipe(takeUntil(this.cancelSessionLoads$))
+      .pipe(
+        takeUntil(this.cancelSessionLoads$),
+        finalize(() => {
+          if (this.sessionLoadOpId === opId) {
+            this._loadingDataset.set(false);
+          }
+        }),
+      )
       .subscribe({
         next: ({ eda, preview }) => {
+          if (
+            this.sessionLoadOpId !== opId ||
+            this._activeSession()?.session_id !== sid ||
+            this._activeSession()?.dataset?.sha256 !== sha
+          ) {
+            return;
+          }
           this._edaReport.set(eda);
           this._preview.set(preview);
-          this._loadingDataset.set(false);
           this.showToast('Automated EDA diagnostics refreshed.');
         },
         error: (err: ApiError) => {
-          this._loadingDataset.set(false);
+          if (this.sessionLoadOpId !== opId) {
+            return;
+          }
           this.showToast(err.detail, 'error');
         },
       });
   }
 
-  sendQuery(promptText: string): void {
+  sendQuery(promptText: string, explicitTurnId?: string): void {
     const trimmed = promptText.trim();
     const sid = this._activeSession()?.session_id;
+    const sha = this._activeSession()?.dataset?.sha256 ?? '';
     if (!trimmed || !sid || !this.hasData() || this._querying()) {
       return;
     }
+
+    const opId = ++this.queryOpId;
+    const clientTurnId =
+      explicitTurnId ||
+      (this.lastFailedTurnId && this.lastFailedPromptText === trimmed
+        ? this.lastFailedTurnId
+        : `turn_${Date.now()}_${opId}`);
 
     this.cancelQuery$.next();
     this._querying.set(true);
@@ -438,14 +527,33 @@ export class WorkspaceStateService {
       error: null,
       latency_ms: null,
       retries_used: 0,
+      client_turn_id: clientTurnId,
     };
     this._messages.update((prev) => [...prev, optimisticUser]);
 
     this.api
-      .queryAgent(sid, trimmed)
-      .pipe(takeUntil(this.cancelQuery$), takeUntil(this.cancelSessionLoads$))
+      .queryAgent(sid, trimmed, clientTurnId)
+      .pipe(
+        takeUntil(this.cancelQuery$),
+        takeUntil(this.cancelSessionLoads$),
+        finalize(() => {
+          if (this.queryOpId === opId) {
+            this._querying.set(false);
+            this._pendingQueryText.set('');
+          }
+        }),
+      )
       .subscribe({
         next: (response) => {
+          if (
+            this.queryOpId !== opId ||
+            this._activeSession()?.session_id !== sid ||
+            (this._activeSession()?.dataset?.sha256 ?? '') !== sha
+          ) {
+            return;
+          }
+          this.lastFailedTurnId = null;
+          this.lastFailedPromptText = '';
           const assistantMsg: ChatMessageRecord = {
             role: 'assistant',
             content: response.answer,
@@ -457,28 +565,123 @@ export class WorkspaceStateService {
             error: response.error,
             latency_ms: response.latency_ms,
             retries_used: response.retries_used,
+            client_turn_id: clientTurnId,
           };
           this._messages.update((prev) => [...prev, assistantMsg]);
           this._selectedCanvasMessageIndex.set(this._messages().length - 1);
-          this._querying.set(false);
-          this._pendingQueryText.set('');
           if (response.status === 'failed' && response.error) {
             this._queryError.set(response.error);
           }
-          this.api.getSession(sid).subscribe({
-            next: (updated) => {
-              this._activeSession.set(updated);
-              this.refreshSessions();
-            },
-          });
+          this.api
+            .getSession(sid)
+            .pipe(takeUntil(this.cancelSessionLoads$))
+            .subscribe({
+              next: (updated) => {
+                if (this._activeSession()?.session_id === sid) {
+                  this._activeSession.set(updated);
+                  this.refreshSessions();
+                }
+              },
+            });
         },
         error: (err: ApiError) => {
-          this._messages.update((prev) => prev.slice(0, -1));
-          this._querying.set(false);
-          this._pendingQueryText.set('');
+          if (
+            this.queryOpId !== opId ||
+            this._activeSession()?.session_id !== sid ||
+            (this._activeSession()?.dataset?.sha256 ?? '') !== sha
+          ) {
+            return;
+          }
+          // Roll back optimistic user bubble pending reconciliation or retry
+          this._messages.update((prev) =>
+            prev.length > 0 && prev[prev.length - 1].client_turn_id === clientTurnId
+              ? prev.slice(0, -1)
+              : prev.slice(0, -1),
+          );
+          this.lastFailedTurnId = clientTurnId;
+          this.lastFailedPromptText = trimmed;
           this._queryError.set(err.detail);
           this._failedPromptDraft.set(trimmed);
-          this.showToast(err.detail, 'error');
+
+          if (err.kind === 'timeout') {
+            this.reconcileHistoryAfterUncertainQuery(sid, sha, trimmed, clientTurnId, opId, err);
+          } else {
+            this.showToast(err.detail, 'error');
+          }
+        },
+      });
+  }
+
+  retryFailedPrompt(): void {
+    const draft = this._failedPromptDraft().trim();
+    if (!draft) {
+      return;
+    }
+    const turnId =
+      this.lastFailedTurnId && this.lastFailedPromptText === draft
+        ? this.lastFailedTurnId
+        : undefined;
+    this.sendQuery(draft, turnId);
+  }
+
+  private reconcileHistoryAfterUncertainQuery(
+    sessionId: string,
+    datasetSha256: string,
+    promptText: string,
+    clientTurnId: string,
+    opId: number,
+    originalErr: ApiError,
+  ): void {
+    this.api
+      .getHistory(sessionId)
+      .pipe(takeUntil(this.cancelQuery$), takeUntil(this.cancelSessionLoads$))
+      .subscribe({
+        next: (history) => {
+          if (
+            this.queryOpId !== opId ||
+            this._activeSession()?.session_id !== sessionId ||
+            (this._activeSession()?.dataset?.sha256 ?? '') !== datasetSha256
+          ) {
+            return;
+          }
+          const msgs = history.messages ?? [];
+          const matchedByTurnId = msgs.some(
+            (m) => m.role === 'assistant' && m.client_turn_id === clientTurnId,
+          );
+          const lastMsg = msgs.length >= 2 ? msgs[msgs.length - 1] : null;
+          const prevMsg = msgs.length >= 2 ? msgs[msgs.length - 2] : null;
+          const matchedByTrailingPair =
+            lastMsg?.role === 'assistant' &&
+            prevMsg?.role === 'user' &&
+            prevMsg.content.trim() === promptText;
+
+          if (matchedByTurnId || matchedByTrailingPair) {
+            this._messages.set(msgs);
+            this.selectLatestAssistantWithArtifacts(msgs);
+            this._queryError.set(null);
+            this._failedPromptDraft.set('');
+            this.lastFailedTurnId = null;
+            this.lastFailedPromptText = '';
+            this.showToast('Recovered completed analytical turn from backend history.');
+            this.api
+              .getSession(sessionId)
+              .pipe(takeUntil(this.cancelSessionLoads$))
+              .subscribe({
+                next: (updated) => {
+                  if (this._activeSession()?.session_id === sessionId) {
+                    this._activeSession.set(updated);
+                    this.refreshSessions();
+                  }
+                },
+              });
+          } else {
+            this.showToast(originalErr.detail, 'error');
+          }
+        },
+        error: () => {
+          if (this.queryOpId === opId) {
+            this.showToast(originalErr.detail, 'error');
+          }
         },
       });
   }
@@ -488,21 +691,38 @@ export class WorkspaceStateService {
     if (!sid) {
       return;
     }
+    this.queryOpId += 1;
     this.cancelQuery$.next();
-    this.api.clearSession(sid).subscribe({
-      next: (updated) => {
-        this._activeSession.set(updated);
-        this._messages.set([]);
-        this._selectedCanvasMessageIndex.set(null);
-        this._queryError.set(null);
-        this._failedPromptDraft.set('');
-        this.refreshSessions();
-        this.showToast('Conversation cleared while keeping the active dataset.');
-      },
-      error: (err: ApiError) => {
-        this.showToast(err.detail, 'error');
-      },
-    });
+    this._querying.set(false);
+    this._pendingQueryText.set('');
+    this._queryError.set(null);
+    this._failedPromptDraft.set('');
+    this.lastFailedTurnId = null;
+    this.lastFailedPromptText = '';
+
+    this.api
+      .clearSession(sid)
+      .pipe(takeUntil(this.cancelSessionLoads$))
+      .subscribe({
+        next: (updated) => {
+          if (this._activeSession()?.session_id !== sid) {
+            return;
+          }
+          this._activeSession.set(updated);
+          this._messages.set([]);
+          this._selectedCanvasMessageIndex.set(null);
+          this._queryError.set(null);
+          this._failedPromptDraft.set('');
+          this.refreshSessions();
+          this.showToast('Conversation cleared while keeping the active dataset.');
+        },
+        error: (err: ApiError) => {
+          if (this._activeSession()?.session_id !== sid) {
+            return;
+          }
+          this.showToast(err.detail, 'error');
+        },
+      });
   }
 
   deleteSession(sessionId: string): void {
@@ -546,14 +766,13 @@ export class WorkspaceStateService {
     }
     this.api
       .updateProvider(sid, req)
-      .pipe(
-        tap((updated) => {
-          this._activeSession.set(updated);
-          this.refreshSessions();
-        }),
-      )
+      .pipe(takeUntil(this.cancelSessionLoads$))
       .subscribe({
-        next: () => {
+        next: (updated) => {
+          if (this._activeSession()?.session_id === sid) {
+            this._activeSession.set(updated);
+          }
+          this.refreshSessions();
           this.showToast(`Model updated to ${req.provider} / ${req.model}.`);
           onDone?.();
         },
@@ -570,23 +789,45 @@ export class WorkspaceStateService {
     if (!sid || !this.hasData() || this._mlRunning()) {
       return;
     }
+    const opId = ++this.mlOpId;
+    this.cancelMl$.next();
     this._mlRunning.set(true);
     this._mlError.set(null);
 
     this.api
       .runMlExperiment(sid, req)
-      .pipe(takeUntil(this.cancelSessionLoads$))
+      .pipe(
+        takeUntil(this.cancelMl$),
+        takeUntil(this.cancelSessionLoads$),
+        finalize(() => {
+          if (this.mlOpId === opId) {
+            this._mlRunning.set(false);
+          }
+        }),
+      )
       .subscribe({
         next: (result) => {
+          if (
+            this.mlOpId !== opId ||
+            this._activeSession()?.session_id !== sid ||
+            (this._activeSession()?.dataset?.sha256 ?? '') !== sha
+          ) {
+            return;
+          }
           this._mlBySession.update((map) => ({
             ...map,
             [sid]: { datasetSha256: sha, result },
           }));
-          this._mlRunning.set(false);
           this.showToast(`Baseline experiment completed (${result.best_model}).`);
         },
         error: (err: ApiError) => {
-          this._mlRunning.set(false);
+          if (
+            this.mlOpId !== opId ||
+            this._activeSession()?.session_id !== sid ||
+            (this._activeSession()?.dataset?.sha256 ?? '') !== sha
+          ) {
+            return;
+          }
           this._mlError.set(err.detail);
           this.showToast(err.detail, 'error');
         },
@@ -615,11 +856,33 @@ export class WorkspaceStateService {
     }, 3200);
   }
 
-  private cancelInFlightSessionWork(): void {
+  private cancelActiveAnalyticalWork(): void {
+    this.queryOpId += 1;
+    this.mlOpId += 1;
     this.cancelQuery$.next();
-    this.cancelSessionLoads$.next();
+    this.cancelMl$.next();
     this._querying.set(false);
     this._pendingQueryText.set('');
+    this._mlRunning.set(false);
+  }
+
+  private cancelInFlightSessionWork(): void {
+    this.sessionLoadOpId += 1;
+    this.uploadOpId += 1;
+    this.queryOpId += 1;
+    this.mlOpId += 1;
+    this.cancelUpload$.next();
+    this.cancelQuery$.next();
+    this.cancelMl$.next();
+    this.cancelSessionLoads$.next();
+    this._loadingDataset.set(false);
+    this._uploading.set(false);
+    this._uploadingFilename.set('');
+    this._querying.set(false);
+    this._pendingQueryText.set('');
+    this._mlRunning.set(false);
+    this.lastFailedTurnId = null;
+    this.lastFailedPromptText = '';
   }
 
   private clearDatasetViewState(): void {
@@ -631,6 +894,8 @@ export class WorkspaceStateService {
     this._queryError.set(null);
     this._mlError.set(null);
     this._failedPromptDraft.set('');
+    this.lastFailedTurnId = null;
+    this.lastFailedPromptText = '';
   }
 
   private selectLatestAssistantWithArtifacts(messages: ChatMessageRecord[]): void {

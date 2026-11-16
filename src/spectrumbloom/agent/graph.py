@@ -512,6 +512,74 @@ class EDAAgentGraph:
                         )
                 response = retry_resp
 
+        # If the user explicitly asked to create/plot a chart/visualization and the model called a
+        # non-chart tool (e.g. get_statistical_summary) and is about to finish with 0 figures,
+        # nudge once to invoke create_standard_chart.
+        turn_figs = state.get("turn_figures") or []
+        if (
+            not getattr(response, "tool_calls", None)
+            and turn_traces
+            and not turn_figs
+            and not last_error
+            and not _INVALID_COL_ANSWER_RE.search(normalize_text(getattr(response, "content", "")))
+            and re.search(
+                r"\b(?:create|plot|generate|build|draw)\b.*\b(?:chart|plot|histogram|heatmap|"
+                r"scatter|box\s*plot|violin|bar\s*chart|line\s*chart)\b",
+                active_query,
+                re.IGNORECASE,
+            )
+        ):
+            chart_nudge = [
+                *prompt_messages,
+                AIMessage(content=normalize_text(getattr(response, "content", "")) or ""),
+                HumanMessage(
+                    content=(
+                        "The user requested a Plotly chart, but no chart has been generated yet. "
+                        "Call `create_standard_chart` right now with the requested `chart_type` "
+                        "(e.g. `heatmap`, `histogram`, `bar`, `box`, `scatter`, `line`)."
+                    )
+                ),
+            ]
+            retry_chart = self.model_with_tools.invoke(chart_nudge)
+            if not getattr(retry_chart, "tool_calls", None):
+                chart_extracted = extract_tool_calls_with_fallback(retry_chart)
+                if chart_extracted:
+                    retry_chart = AIMessage(
+                        content=normalize_text(getattr(retry_chart, "content", "")),
+                        tool_calls=chart_extracted,
+                    )
+            response = retry_chart
+
+        # If the user explicitly asked for a difference ("difference", "minus") or ratio ("ratio")
+        # and the draft final answer after tool execution omitted stating the difference or ratio,
+        # nudge once so the requested comparison value is explicitly calculated and reported.
+        if not getattr(response, "tool_calls", None) and turn_traces and not last_error:
+            draft_text = normalize_text(getattr(response, "content", ""))
+            q_low = active_query.lower()
+            d_low = draft_text.lower()
+            asks_diff = bool(re.search(r"\b(?:difference|minus)\b", q_low))
+            asks_ratio = bool(re.search(r"\b(?:ratio)\b", q_low))
+            has_diff_word = bool(
+                re.search(r"\b(?:difference|minus|higher by|lower by|diff)\b", d_low)
+            )
+            has_ratio_word = bool(re.search(r"\b(?:ratio|times|x\s+higher|x\s+as)\b", d_low))
+            if (asks_diff and not has_diff_word) or (asks_ratio and not has_ratio_word):
+                missing_kind = "difference" if asks_diff else "ratio"
+                calc_nudge = [
+                    *prompt_messages,
+                    AIMessage(content=draft_text or ""),
+                    HumanMessage(
+                        content=(
+                            f"The user explicitly requested the numeric {missing_kind}. "
+                            f"Do not call any more tools. Using the exact values already in the "
+                            f"tool outputs above, compute and state both individual values AND "
+                            f"their exact numeric {missing_kind} clearly in your final response."
+                        )
+                    ),
+                ]
+                retry_calc = self.chat_model.invoke(calc_nudge)
+                response = AIMessage(content=normalize_text(getattr(retry_calc, "content", "")))
+
         return {
             "messages": [response],
             "last_error": None,
@@ -591,11 +659,17 @@ class EDAAgentGraph:
                 ok, reason = validate_plotly_figure_payload(fig_payload)
                 if not ok:
                     raise ValueError(reason or "Chart specification failed validation.")
-                res_dict = {
+                res_dict: dict[str, Any] = {
                     "status": "chart_created",
                     "title": fig_payload["title"],
                     "chart_kind": fig_payload["chart_kind"],
+                    "x": validated_chart.x or None,
+                    "y": validated_chart.y,
+                    "rows_total": int(fig_payload.get("rows_total", len(df))),
+                    "rows_plotted": int(fig_payload.get("rows_plotted", len(df))),
                 }
+                if "x_min" in fig_payload:
+                    res_dict["x_range"] = [fig_payload["x_min"], fig_payload["x_max"]]
                 return (
                     json.dumps(res_dict, default=str),
                     res_dict,
@@ -774,8 +848,8 @@ class EDAAgentGraph:
                 parts.append(f"ERROR:\n{error_msg}")
 
             content = "\n\n".join(parts) if parts else "Execution completed with no output."
-            if len(content) > 1600:
-                content = f"{content[:1550]}\n...[truncated for context budget]"
+            if len(content) > 2200:
+                content = f"{content[:2150]}\n...[truncated for context budget]"
             tool_messages.append(ToolMessage(content=content, tool_call_id=tc_id, name=name))
 
         return {
@@ -854,6 +928,21 @@ class EDAAgentGraph:
             "terminal_error": terminal_error,
             "timed_out": timed_out,
         }
+
+    def seed_history_if_empty(self, thread_id: str, history_messages: list[BaseMessage]) -> bool:
+        """Seed the LangGraph checkpointer with persisted messages if the thread is empty."""
+        if not history_messages:
+            return False
+        config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+        try:
+            snap = self.compiled.get_state(config)
+            existing = list((snap.values or {}).get("messages") or []) if snap else []
+            if existing:
+                return False
+            self.compiled.update_state(config, {"messages": history_messages})
+            return True
+        except Exception:
+            return False
 
     def invoke(
         self,

@@ -14,6 +14,30 @@ from spectrumbloom.core.config import Settings
 
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
+_BEARER_SECRET_RE = re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._\-~+/=]{6,}")
+_KNOWN_KEY_RE = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_\-]{12,}|AIza[0-9A-Za-z_\-]{20,}|lf_[A-Za-z0-9_\-]{12,})\b"
+)
+_KV_SECRET_RE = re.compile(
+    r"(?i)\b(api[_-]?key|auth[_-]?token|executor[_-]?token|token|secret|password|authorization)"
+    r"(\s*[:=]\s*['\"]?)([^\s,'\"&;]{6,})"
+)
+
+
+def redact_secrets(text: str, *, extra_secrets: tuple[str, ...] = ()) -> str:
+    """Scrub Bearer tokens, provider API keys, and configured runtime secrets from error strings."""
+    if not text:
+        return ""
+    scrubbed = str(text)
+    for sec in extra_secrets:
+        candidate = (sec or "").strip()
+        if len(candidate) >= 6 and candidate in scrubbed:
+            scrubbed = scrubbed.replace(candidate, "[REDACTED]")
+    scrubbed = _BEARER_SECRET_RE.sub(r"\1[REDACTED]", scrubbed)
+    scrubbed = _KNOWN_KEY_RE.sub("[REDACTED_KEY]", scrubbed)
+    scrubbed = _KV_SECRET_RE.sub(r"\1\2[REDACTED]", scrubbed)
+    return scrubbed
+
 
 def sanitize_filename(filename: str) -> str:
     """Strip path traversal and unsafe characters from an uploaded filename."""
