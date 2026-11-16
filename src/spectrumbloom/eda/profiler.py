@@ -191,7 +191,7 @@ def format_profile_for_prompt(
     profile: DatasetProfile,
     df: pd.DataFrame,
     *,
-    max_detailed_cols: int = 12,
+    max_detailed_cols: int = 10,
 ) -> str:
     """Render a compact, token-efficient schema & summary for local 4B LLMs."""
     total_missing_cells = int(sum(col.null_count for col in profile.column_profiles))
@@ -212,9 +212,32 @@ def format_profile_for_prompt(
                 f"mean={ns['mean']:.4g}, min={ns['min']:.4g}, "
                 f"median={ns['median']:.4g}, max={ns['max']:.4g}"
             )
-        elif col.top_values:
-            top = ", ".join(f"{item['value']}({item['count']})" for item in col.top_values[:3])
-            stats_str = f"top=[{top}]"
+        elif col.top_values or col.semantic_type in {"categorical", "boolean"}:
+            vc = (
+                df[col.name].dropna().astype(str).value_counts() if col.name in df.columns else None
+            )
+            if vc is not None and 0 < len(vc) <= 10:
+                all_cats = ", ".join(f"{val}({cnt})" for val, cnt in vc.items())
+                if len(all_cats) <= 180:
+                    stats_str = f"all_categories=[{all_cats}]"
+                else:
+                    top = ", ".join(f"{val}({cnt})" for val, cnt in vc.head(3).items())
+                    stats_str = (
+                        f"TOP VALUES ONLY — NOT EXHAUSTIVE ({min(3, len(vc))} of "
+                        f"{col.unique_count}): [{top}]"
+                    )
+            elif col.top_values:
+                shown = col.top_values[:3]
+                top = ", ".join(f"{item['value']}({item['count']})" for item in shown)
+                if col.unique_count <= len(shown):
+                    stats_str = f"all_categories=[{top}]"
+                else:
+                    stats_str = (
+                        f"TOP VALUES ONLY — NOT EXHAUSTIVE ({len(shown)} of "
+                        f"{col.unique_count}): [{top}]"
+                    )
+            else:
+                stats_str = "empty"
         else:
             stats_str = "empty"
 

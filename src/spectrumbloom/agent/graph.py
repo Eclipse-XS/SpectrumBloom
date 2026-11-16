@@ -75,8 +75,8 @@ _DATASET_CALC_RE = re.compile(
     re.IGNORECASE,
 )
 _INVALID_COL_ANSWER_RE = re.compile(
-    r"\b(?:does not exist|not exist|not found|not in the dataset|"
-    r"no such column|invalid column|unknown column)\b",
+    r"\b(?:no such column|invalid column|unknown column)\b"
+    r"|\bcolumn\b[^.!?\n]{0,40}\b(?:does not exist|not exist|not found|not in the dataset)\b",
     re.IGNORECASE,
 )
 _NUM_TOKEN_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
@@ -666,8 +666,17 @@ class EDAAgentGraph:
                     "x": validated_chart.x or None,
                     "y": validated_chart.y,
                     "rows_total": int(fig_payload.get("rows_total", len(df))),
+                    "rows_considered": int(fig_payload.get("rows_considered", len(df))),
                     "rows_plotted": int(fig_payload.get("rows_plotted", len(df))),
+                    "rows_excluded": int(fig_payload.get("rows_excluded", 0)),
+                    "points_rendered": int(
+                        fig_payload.get("points_rendered", fig_payload.get("rows_plotted", len(df)))
+                    ),
                 }
+                if "groups_plotted" in fig_payload:
+                    res_dict["groups_plotted"] = fig_payload["groups_plotted"]
+                if "agg_func" in fig_payload:
+                    res_dict["agg_func"] = fig_payload["agg_func"]
                 if "x_min" in fig_payload:
                     res_dict["x_range"] = [fig_payload["x_min"], fig_payload["x_max"]]
                 return (

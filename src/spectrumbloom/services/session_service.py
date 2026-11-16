@@ -7,6 +7,7 @@ import hashlib
 import threading
 import time
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -53,10 +54,21 @@ from spectrumbloom.services.eval_service import evaluate_turn_deterministically
 
 
 class _SessionRuntimeCache:
-    """In-process cache of DataFrame, EDA computations, graph, and optional runtime API key."""
+    """In-process cache of DataFrame, EDA computations, graph, and optional runtime API key.
+
+    Synchronization invariant:
+    - Callers acquire a cache entry via `_acquire_session_cache(session_id)`, taking `_cache_lock`
+      briefly, returning the entry, releasing `_cache_lock`, acquiring `entry.lock`, and re-checking
+      `not entry.released`.
+    - Eviction under `_cache_lock` ONLY attempts `entry.lock.acquire(blocking=False)` and pops from
+      `_runtime_cache` AFTER acquiring `entry.lock`; busy entries are skipped safely and retried on
+      subsequent operations. Because `_cache_lock` never waits on `entry.lock`, holding `entry.lock`
+      while taking `_cache_lock` (e.g. `delete_session`) cannot deadlock.
+    """
 
     def __init__(self, checkpointer: Any = None) -> None:
         self.lock = threading.RLock()
+        self.released: bool = False
         self.last_accessed: float = time.monotonic()
         self.dataset_sha256: str | None = None
         self.dataset_storage_ref: str | None = None
@@ -84,6 +96,7 @@ class _SessionRuntimeCache:
         self.clear_dataset_resources()
         self.api_key = None
         self.checkpointer = None
+        self.released = True
 
 
 class SpectrumBloomService:
@@ -117,20 +130,23 @@ class SpectrumBloomService:
         ttl = max(60, int(self.settings.session_ttl_seconds))
         max_entries = max(1, int(self.settings.max_cached_sessions))
 
-        to_evict: list[str] = []
-        for sid, entry in list(self._runtime_cache.items()):
-            if sid == preserve_session_id:
-                continue
-            if (now - entry.last_accessed) >= ttl:
-                to_evict.append(sid)
-
-        for sid in to_evict:
-            evicted = self._runtime_cache.pop(sid, None)
-            if evicted is not None and evicted.lock.acquire(blocking=False):
+        expired_candidates = [
+            (sid, entry)
+            for sid, entry in list(self._runtime_cache.items())
+            if sid != preserve_session_id and (now - entry.last_accessed) >= ttl
+        ]
+        for sid, entry in expired_candidates:
+            # Acquire entry.lock BEFORE detaching so an active request never loses its locked entry.
+            if entry.lock.acquire(blocking=False):
                 try:
-                    evicted.release_all()
+                    if (
+                        self._runtime_cache.get(sid) is entry
+                        and (time.monotonic() - entry.last_accessed) >= ttl
+                    ):
+                        self._runtime_cache.pop(sid, None)
+                        entry.release_all()
                 finally:
-                    evicted.lock.release()
+                    entry.lock.release()
 
         if len(self._runtime_cache) > max_entries:
             candidates = sorted(
@@ -147,16 +163,17 @@ class SpectrumBloomService:
                     break
                 if entry.lock.acquire(blocking=False):
                     try:
-                        self._runtime_cache.pop(sid, None)
-                        entry.release_all()
-                        excess -= 1
+                        if self._runtime_cache.get(sid) is entry:
+                            self._runtime_cache.pop(sid, None)
+                            entry.release_all()
+                            excess -= 1
                     finally:
                         entry.lock.release()
 
     def _get_cache(self, session_id: str) -> _SessionRuntimeCache:
         with self._cache_lock:
             cache = self._runtime_cache.get(session_id)
-            if cache is None:
+            if cache is None or cache.released:
                 cache = _SessionRuntimeCache(checkpointer=self.shared_checkpointer)
                 self._runtime_cache[session_id] = cache
             else:
@@ -164,13 +181,34 @@ class SpectrumBloomService:
             self._evict_expired_or_excess_caches_locked(preserve_session_id=session_id)
             return cache
 
+    @contextlib.contextmanager
+    def _acquire_session_cache(self, session_id: str) -> Iterator[_SessionRuntimeCache]:
+        """Acquire a live, non-released runtime cache entry and hold its lock cleanly."""
+        while True:
+            cache = self._get_cache(session_id)
+            cache.lock.acquire()
+            if not cache.released:
+                try:
+                    cache.touch()
+                    yield cache
+                finally:
+                    cache.touch()
+                    cache.lock.release()
+                return
+            cache.lock.release()
+
     def _require_session(self, session_id: str) -> SessionRecord:
         record = self.session_repo.get(session_id)
         if record is None:
             with self._cache_lock:
-                stale = self._runtime_cache.pop(session_id, None)
-                if stale is not None:
-                    stale.release_all()
+                stale = self._runtime_cache.get(session_id)
+                if stale is not None and stale.lock.acquire(blocking=False):
+                    try:
+                        if self._runtime_cache.get(session_id) is stale:
+                            self._runtime_cache.pop(session_id, None)
+                            stale.release_all()
+                    finally:
+                        stale.lock.release()
             raise SessionNotFoundError(f"Session '{session_id}' not found.")
         return record
 
@@ -304,9 +342,9 @@ class SpectrumBloomService:
             model=model,
         )
         self.session_repo.create(record)
-        cache = self._get_cache(session_id)
-        if req.api_key:
-            cache.api_key = req.api_key
+        with self._acquire_session_cache(session_id) as cache:
+            if req.api_key:
+                cache.api_key = req.api_key
         return CreateSessionResponse(
             session_id=session_id,
             thread_id=thread_id,
@@ -378,8 +416,7 @@ class SpectrumBloomService:
         ]
 
     def update_provider(self, session_id: str, req: UpdateProviderRequest) -> SessionStatusResponse:
-        cache = self._get_cache(session_id)
-        with cache.lock:
+        with self._acquire_session_cache(session_id) as cache:
             record = self._require_session(session_id)
             api_key = req.api_key if req.api_key is not None else cache.api_key
             self.llm_provider.build_chat_model(
@@ -408,8 +445,7 @@ class SpectrumBloomService:
             )
 
     def clear_session_chat(self, session_id: str) -> SessionStatusResponse:
-        cache = self._get_cache(session_id)
-        with cache.lock:
+        with self._acquire_session_cache(session_id) as cache:
             record = self._require_session(session_id)
             record.thread_id = f"sb_{uuid.uuid4().hex[:12]}"
             record.messages = []
@@ -435,8 +471,7 @@ class SpectrumBloomService:
             )
 
     def delete_session(self, session_id: str) -> None:
-        cache = self._get_cache(session_id)
-        with cache.lock:
+        with self._acquire_session_cache(session_id) as cache:
             record = self._require_session(session_id)
             old_ref = record.dataset.storage_ref if record.dataset is not None else None
             self.session_repo.delete(session_id)
@@ -445,14 +480,14 @@ class SpectrumBloomService:
                     self.dataset_store.delete(old_ref)
             cache.release_all()
             with self._cache_lock:
-                self._runtime_cache.pop(session_id, None)
+                if self._runtime_cache.get(session_id) is cache:
+                    self._runtime_cache.pop(session_id, None)
 
     def upload_dataset(
         self, session_id: str, filename: str, content: bytes
     ) -> FullEDAReportResponse:
         # Verify session exists before doing heavy work
         self._require_session(session_id)
-        cache = self._get_cache(session_id)
 
         with self.telemetry.span(
             "eda.upload_and_profile",
@@ -469,7 +504,7 @@ class SpectrumBloomService:
             new_statistics = compute_statistics(df, new_profile)
             new_figures = build_eda_figures(df, new_profile, new_statistics)
 
-            with cache.lock:
+            with self._acquire_session_cache(session_id) as cache:
                 record = self._require_session(session_id)
                 old_storage_ref = record.dataset.storage_ref if record.dataset is not None else None
                 staged_storage_ref: str | None = None
@@ -523,8 +558,7 @@ class SpectrumBloomService:
     def get_preview(
         self, session_id: str, rows: int = 10, sanitize_formulas: bool = True
     ) -> DatasetPreviewResponse:
-        cache = self._get_cache(session_id)
-        with cache.lock:
+        with self._acquire_session_cache(session_id) as cache:
             record = self._require_session(session_id)
             df = self._ensure_df(record, cache)
             head_records = sanitize_json_payload(df.head(rows).to_dict(orient="records"))
@@ -541,9 +575,8 @@ class SpectrumBloomService:
             )
 
     def get_full_eda(self, session_id: str) -> FullEDAReportResponse:
-        cache = self._get_cache(session_id)
         with self.telemetry.span("eda.full_report", {"session.id": session_id}):
-            with cache.lock:
+            with self._acquire_session_cache(session_id) as cache:
                 record = self._require_session(session_id)
                 _, prof, stats_rep, figs = self._ensure_eda(record, cache)
                 return FullEDAReportResponse(
@@ -553,12 +586,11 @@ class SpectrumBloomService:
                 )
 
     def run_ml(self, session_id: str, request: MLExperimentRequest) -> MLExperimentResponse:
-        cache = self._get_cache(session_id)
         with self.telemetry.span(
             "ml.experiment",
             {"session.id": session_id, "ml.target": request.target_column},
         ):
-            with cache.lock:
+            with self._acquire_session_cache(session_id) as cache:
                 record = self._require_session(session_id)
                 df = self._ensure_df(record, cache)
                 result = run_ml_experiment(df, request)
@@ -572,10 +604,9 @@ class SpectrumBloomService:
         *,
         client_turn_id: str | None = None,
     ) -> QueryResponse:
-        cache = self._get_cache(session_id)
         started = time.perf_counter()
 
-        with cache.lock:
+        with self._acquire_session_cache(session_id) as cache:
             record = self._require_session(session_id)
             normalized_turn_id = (client_turn_id or "").strip() or None
             if normalized_turn_id:

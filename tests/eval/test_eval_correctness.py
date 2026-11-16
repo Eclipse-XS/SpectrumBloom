@@ -872,3 +872,252 @@ def test_benchmark_regressions_for_evaluator_defects_and_analytical_guards() -> 
     )
     assert ungrounded_from_profile["numeric_grounding_ratio"] == 0.0
     assert ungrounded_from_profile["passed"] is False
+
+
+def test_chart_row_counts_and_bar_chart_semantics() -> None:
+    import base64
+    import json
+    import struct
+
+    import pandas as pd
+    import pytest
+
+    def _decode_seq(seq: object) -> list[object]:
+        if isinstance(seq, dict) and "bdata" in seq:
+            raw = base64.b64decode(seq["bdata"])
+            fmt_map = {"f8": "d", "f4": "f", "i8": "q", "i4": "i", "i2": "h", "i1": "b"}
+            code = fmt_map[str(seq.get("dtype", "f8"))]
+            stride = struct.calcsize(f"<{code}")
+            return list(struct.unpack(f"<{len(raw) // stride}{code}", raw))
+        return list(seq)
+
+    from spectrumbloom.eda.charts import build_standard_chart, validate_plotly_figure_payload
+
+    # 1. Complete numeric dataset: all chart types report accurate row & point counts
+    complete_df = pd.DataFrame(
+        {
+            "x_val": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "y_val": [10.0, 20.0, 30.0, 40.0, 50.0],
+            "cat": ["North", "South", "East", "West", "Central"],
+        }
+    )
+    for ctype, kw in (
+        ("histogram", {"x": "x_val"}),
+        ("box", {"x": "cat", "y": "y_val"}),
+        ("violin", {"y": "y_val"}),
+        ("scatter", {"x": "x_val", "y": "y_val"}),
+        ("line", {"x": "x_val", "y": "y_val"}),
+        ("heatmap", {"x": ""}),
+    ):
+        fig = build_standard_chart(complete_df, chart_type=ctype, **kw)
+        assert fig["rows_total"] == 5
+        assert fig["rows_considered"] == 5
+        assert fig["rows_plotted"] == 5
+        assert fig["rows_excluded"] == 0
+        assert validate_plotly_figure_payload(fig)[0] is True
+
+    # 2. Missing values (Mauna Loa-scale 2284 rows with 59 missing -> 2225 plotted)
+    co2_vals = [315.0 + (i % 50) * 0.5 for i in range(2225)] + [None] * 59
+    co2_like = pd.DataFrame({"co2": co2_vals, "year": [1958 + (i // 52) for i in range(2284)]})
+    hist = build_standard_chart(co2_like, chart_type="histogram", x="co2")
+    assert hist["rows_total"] == 2284
+    assert hist["rows_considered"] == 2284
+    assert hist["rows_plotted"] == 2225
+    assert hist["rows_excluded"] == 59
+    assert hist["points_rendered"] == 2225
+    parsed_hist = json.loads(hist["figure_json"])
+    assert len(_decode_seq(parsed_hist["data"][0]["x"])) == 2225
+
+    # Grounding passes when citing 2225 / 2284 / 59 against chart trace metadata
+    ev_hist = evaluate_turn_deterministically(
+        query="Plot a histogram of co2.",
+        answer="Plotted 2225 valid CO2 observations (59 excluded out of 2284 total rows).",
+        tool_traces=[
+            ToolTraceItem(
+                tool="create_standard_chart",
+                stdout="",
+                result={
+                    "rows_total": hist["rows_total"],
+                    "rows_considered": hist["rows_considered"],
+                    "rows_plotted": hist["rows_plotted"],
+                    "rows_excluded": hist["rows_excluded"],
+                },
+            )
+        ],
+        figures=[hist],
+        status="success",
+    )
+    assert ev_hist["passed"] is True
+    assert ev_hist["numeric_grounding_ratio"] == 1.0
+
+    # 3. Non-numeric coercion & filtered subset exclusion
+    mixed_df = pd.DataFrame(
+        {
+            "region": ["West", "West", "East", "East", "West"],
+            "rev": ["100", "200", "bad", None, "300"],
+        }
+    )
+    mixed_hist = build_standard_chart(mixed_df, chart_type="histogram", x="rev")
+    assert mixed_hist["rows_total"] == 5
+    assert mixed_hist["rows_plotted"] == 3
+    assert mixed_hist["rows_excluded"] == 2
+
+    filtered_df = mixed_df[mixed_df["region"] == "West"].copy()
+    filtered_hist = build_standard_chart(filtered_df, chart_type="histogram", x="rev")
+    assert filtered_hist["rows_total"] == 3
+    assert filtered_hist["rows_plotted"] == 3
+    assert filtered_hist["rows_excluded"] == 0
+
+    # 4. P1 Bar chart semantics: repeated categories without agg_func require opt-in
+    sales_df = pd.DataFrame(
+        {
+            "category": ["A", "A", "B", "B", None, "C"],
+            "revenue": [10.0, 20.0, 30.0, None, 40.0, 50.0],
+        }
+    )
+    with pytest.raises(ValueError, match="repeated categories"):
+        build_standard_chart(sales_df, chart_type="bar", x="category", y="revenue", agg_func="none")
+
+    # Explicit row-level bar chart allowed only with explicit opt-in & clear label
+    row_bar = build_standard_chart(
+        sales_df, chart_type="bar", x="category", y="revenue", agg_func="none", allow_row_level=True
+    )
+    parsed_row_bar = json.loads(row_bar["figure_json"])
+    assert "Row Value" in parsed_row_bar["layout"]["yaxis"]["title"]["text"]
+    assert row_bar["rows_plotted"] == 4  # drops None category & None revenue
+
+    # Categorical count bar (y=None)
+    count_bar = build_standard_chart(sales_df, chart_type="bar", x="category")
+    assert count_bar["agg_func"] == "count"
+    assert count_bar["rows_plotted"] == 6
+    parsed_cnt = json.loads(count_bar["figure_json"])
+    assert parsed_cnt["layout"]["yaxis"]["title"]["text"] == "Count"
+
+    # Aggregated sum / mean / median bar charts vs direct pandas ground truth
+    for fn, expected_label in (("sum", "Total"), ("mean", "Mean"), ("median", "Median")):
+        bar = build_standard_chart(
+            sales_df, chart_type="bar", x="category", y="revenue", agg_func=fn
+        )
+        parsed = json.loads(bar["figure_json"])
+        assert parsed["layout"]["yaxis"]["title"]["text"].startswith(expected_label)
+        assert bar["rows_plotted"] == 5  # 1 None revenue excluded
+        assert bar["rows_excluded"] == 1
+        bar_map = dict(
+            zip(
+                _decode_seq(parsed["data"][0]["x"]),
+                _decode_seq(parsed["data"][0]["y"]),
+                strict=True,
+            )
+        )
+        clean_work = sales_df.dropna(subset=["revenue"]).copy()
+        clean_work["category"] = clean_work["category"].fillna("(Missing)")
+        expected_map = getattr(clean_work.groupby("category")["revenue"], fn)().to_dict()
+        for k, v in expected_map.items():
+            assert bar_map[k] == pytest.approx(v, rel=1e-6)
+
+
+def test_categorical_preview_domain_boundaries_and_tool_reliability_guards() -> None:
+    import pandas as pd
+    import pytest
+
+    from spectrumbloom.agent.deterministic_tools import format_statistical_focus, run_aggregate_data
+    from spectrumbloom.agent.graph import _requires_tool_execution
+    from spectrumbloom.agent.tools import AggregateDataInput, StandardChartInput
+    from spectrumbloom.eda.profiler import format_profile_for_prompt, profile_dataframe
+    from spectrumbloom.eda.statistics import compute_statistics
+
+    # 1. 4 equally frequent categories (Inland_Grid-style): all 4 appear in exhaustive preview
+    df_4 = pd.DataFrame(
+        {
+            "grid_zone": ["North_Grid", "South_Grid", "Coastal_Grid", "Inland_Grid"] * 15,
+            "load_mva": [83.5, 58.2, 70.6, 58.7] * 15,
+        }
+    )
+    prof_4 = profile_dataframe(df_4, filename="grid.csv")
+    ctx_4 = format_profile_for_prompt(prof_4, df_4)
+    assert "all_categories=[" in ctx_4
+    assert "Inland_Grid" in ctx_4
+
+    agg_4 = run_aggregate_data(
+        df_4, metric_column="load_mva", agg_func="mean", group_by="grid_zone"
+    )
+    assert agg_4["mapping"]["North_Grid"] / agg_4["mapping"]["Inland_Grid"] == pytest.approx(
+        83.5 / 58.7, abs=1e-4
+    )
+
+    # 2. High-cardinality column (14 categories with Unicode/spaces/digits, rare item outside top 3)
+    cats = ["Alpha_1", "Alpha_1", "Beta 2", "Beta 2", "Gamma_3", "Gamma_3"] + [
+        f"Zone_α {i}" for i in range(4, 15)
+    ]
+    df_high = pd.DataFrame({"region": cats, "val": [float(i + 1) for i in range(len(cats))]})
+    prof_high = profile_dataframe(df_high, filename="high.csv")
+    rep_high = compute_statistics(df_high, prof_high)
+    ctx_high = format_profile_for_prompt(prof_high, df_high)
+    assert "TOP VALUES ONLY — NOT EXHAUSTIVE" in ctx_high
+    assert "Zone_α 14" not in ctx_high  # absent from top-3 preview
+
+    # Deterministic lookup exposes full domain & computes stats cleanly for absent-from-preview item
+    lookup = format_statistical_focus(df_high, prof_high, rep_high, columns=["region"])
+    domain_vals = {d["value"] for d in lookup["category_domains"]["region"]["distinct_values"]}
+    assert "Zone_α 14" in domain_vals
+    assert lookup["category_domains"]["region"]["is_exhaustive"] is True
+
+    agg_unicode = run_aggregate_data(
+        df_high,
+        metric_column="val",
+        agg_func="mean",
+        filter_column="region",
+        filter_op="==",
+        filter_value="Zone_α 14",
+    )
+    assert agg_unicode["rows_matched"] == 1
+
+    # Genuinely absent category returns rows_matched=0 plus available_categories evidence
+    agg_absent = run_aggregate_data(
+        df_high,
+        metric_column="val",
+        agg_func="count",
+        filter_column="region",
+        filter_op="==",
+        filter_value="NonExistent_Zone",
+    )
+    assert agg_absent["rows_matched"] == 0
+    assert agg_absent["total_unique_categories"] == 14
+
+    # 3. _requires_tool_execution forbids claiming a category does not exist without tools,
+    #    while preserving tools=0 refusal when rejecting a truly missing column
+    assert (
+        _requires_tool_execution(
+            "Compute ratio for Inland_Grid.",
+            "The category Inland_Grid does not exist in the dataset.",
+            [],
+        )
+        is True
+    )
+    assert (
+        _requires_tool_execution(
+            "What is the mean of bogus_col?",
+            "Column 'bogus_col' does not exist in the dataset.",
+            [],
+        )
+        is False
+    )
+    # Follow-up referring to a previously selected category triggers tool execution
+    assert (
+        _requires_tool_execution(
+            "What is the median for that region now?",
+            "The median for that region is 58.7.",
+            ["North_Grid mean is 83.5."],
+        )
+        is True
+    )
+
+    # 4. P1 Tool input schema reliability fixes ('!' alias -> '!=', histogram y -> x)
+    agg_alias = AggregateDataInput.model_validate(
+        {"filter2_column": "quarter", "filter2_op": "!", "filter2_value": 1}
+    )
+    assert agg_alias.filter2_op == "!="
+
+    hist_in = StandardChartInput.model_validate({"chart_type": "histogram", "y": "co2"})
+    assert hist_in.x == "co2"
+    assert hist_in.y is None

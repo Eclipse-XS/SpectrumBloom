@@ -16,6 +16,7 @@ from spectrumbloom.core.security import redact_secrets
 from spectrumbloom.core.telemetry import TelemetryRuntime
 from spectrumbloom.domain.exceptions import (
     LLMInvocationError,
+    MLExperimentError,
     SessionConflictError,
     SessionNotFoundError,
 )
@@ -467,6 +468,116 @@ def test_runtime_cache_ttl_eviction_and_bounded_lru_cleanup(tmp_path: Path) -> N
     # Deleting a session removes its runtime cache and releases resources
     service.delete_session(extra.session_id)
     assert extra.session_id not in service._runtime_cache
+
+
+def test_runtime_cache_eviction_concurrency_and_lock_safety(tmp_path: Path) -> None:
+    """Verify active locked entries never detach and concurrent ops stay deadlock-free."""
+    service = _make_service(tmp_path, ttl_seconds=60, max_cached_sessions=2, delay_seconds=0.05)
+
+    s1 = service.create_session(CreateSessionRequest()).session_id
+    service.upload_dataset(s1, "s1.csv", CSV_A)
+    s2 = service.create_session(CreateSessionRequest()).session_id
+    service.upload_dataset(s2, "s2.csv", CSV_B)
+
+    # 1. Expired idle entry is released and marked released
+    cache1 = service._runtime_cache[s1]
+    cache1.last_accessed = time.monotonic() - 3600.0
+    service.create_session(CreateSessionRequest())
+    assert cache1.released is True
+    assert cache1.df is None
+    assert s1 not in service._runtime_cache
+
+    # 2. Active locked entry (even if expired and over LRU cap) is NEVER prematurely evicted
+    cache2 = service._runtime_cache[s2]
+    cache2.last_accessed = time.monotonic() - 3600.0
+    locked_ready = threading.Event()
+    release_lock_ev = threading.Event()
+
+    def _hold_lock() -> None:
+        with service._acquire_session_cache(s2) as c:
+            locked_ready.set()
+            release_lock_ev.wait(timeout=5.0)
+            # Inside lock, entry must remain intact and unreleased
+            assert not c.released
+            assert c.df is not None
+
+    holder = threading.Thread(target=_hold_lock)
+    holder.start()
+    assert locked_ready.wait(timeout=2.0)
+
+    # Force LRU & TTL cleanup while s2 is actively locked
+    s4 = service.create_session(CreateSessionRequest()).session_id
+    s5 = service.create_session(CreateSessionRequest()).session_id
+    assert s2 in service._runtime_cache
+    assert cache2.released is False
+    assert cache2.df is not None
+
+    release_lock_ev.set()
+    holder.join(timeout=5.0)
+    assert not holder.is_alive()
+
+    # Once unlocked and idle/expired, subsequent eviction cleans up s2 down to max_cached_sessions
+    cache2.last_accessed = time.monotonic() - 3600.0
+    with service._cache_lock:
+        service._evict_expired_or_excess_caches_locked(preserve_session_id=s5)
+    assert cache2.released is True
+    assert s2 not in service._runtime_cache
+    assert len(service._runtime_cache) <= 2
+
+    # 3. Previously evicted session s1 & s2 can be loaded again from repo + store
+    reloaded = service.get_preview(s1, rows=3)
+    assert reloaded.shape == [3, 3]
+    reloaded_eda = service.get_full_eda(s2)
+    assert reloaded_eda.profile.rows == 4
+
+    # 4. Concurrent query + ML + repeated session creation complete without deadlock or corruption
+    ml_csv = b"feature_a,feature_b,target\n" + b"".join(
+        f"{i},{i * 2},{i % 2}\n".encode("ascii") for i in range(40)
+    )
+    service.upload_dataset(s4, "ml.csv", ml_csv)
+
+    from spectrumbloom.domain.schemas import MLExperimentRequest
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        futs: list[concurrent.futures.Future[Any]] = []
+        futs.append(pool.submit(service.run_query, s1, "How many rows?"))
+        futs.append(
+            pool.submit(
+                service.run_ml,
+                s4,
+                MLExperimentRequest(target_column="target", task_type="classification", cv_folds=3),
+            )
+        )
+        for idx in range(4):
+            extra_id = service.create_session(CreateSessionRequest()).session_id
+            service.upload_dataset(extra_id, f"churn_{idx}.csv", CSV_A)
+            futs.append(pool.submit(service.get_preview, extra_id, 2))
+        results = [f.result(timeout=10.0) for f in futs]
+
+    assert "Rows=3" in results[0].answer
+    assert results[1].best_model
+    assert len(service._runtime_cache) <= 2
+
+    # 5. Failed query/ML operations do not leave locks held or corrupt cache state
+    class _ExplodingChatModel:
+        def bind_tools(self, tools: list[Any]) -> Any:
+            return self
+
+        def invoke(self, messages: list[Any]) -> Any:
+            raise RuntimeError("boom")
+
+    orig_builder = service.llm_provider.build_chat_model
+    service.llm_provider.build_chat_model = lambda **kwargs: _ExplodingChatModel()  # type: ignore[method-assign]
+    if s4 in service._runtime_cache:
+        service._runtime_cache[s4].graph = None
+    with pytest.raises(LLMInvocationError):
+        service.run_query(s4, "Fail cleanly")
+    service.llm_provider.build_chat_model = orig_builder  # type: ignore[method-assign]
+    with pytest.raises(MLExperimentError):
+        service.run_ml(s4, MLExperimentRequest(target_column="nonexistent_col", task_type="auto"))
+    # Session remains usable afterwards (lock released cleanly)
+    assert service.get_preview(s4, rows=2).shape == [40, 3]
+    assert len(service._runtime_cache) <= 2
 
 
 def test_upload_size_streaming_guard_and_secret_redaction(tmp_path: Path) -> None:

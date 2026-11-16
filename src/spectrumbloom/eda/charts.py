@@ -78,22 +78,55 @@ def _encode_figure(fig: go.Figure, title: str, chart_kind: str) -> dict[str, Any
     return payload
 
 
+def _attach_chart_metadata(
+    payload: dict[str, Any],
+    *,
+    rows_total: int,
+    rows_considered: int,
+    rows_plotted: int,
+    points_rendered: int,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Attach consistent, mathematically accurate observation and mark counts to a figure."""
+    payload["rows_total"] = int(rows_total)
+    payload["rows_considered"] = int(rows_considered)
+    payload["rows_plotted"] = int(rows_plotted)
+    payload["rows_excluded"] = int(max(0, rows_total - rows_plotted))
+    payload["points_rendered"] = int(points_rendered)
+    for key, val in extra.items():
+        if val is not None:
+            payload[key] = val
+    return payload
+
+
 def build_standard_chart(
     df: pd.DataFrame,
     *,
     chart_type: str,
-    x: str,
+    x: str = "",
     y: str | None = None,
     color: str | None = None,
     agg_func: str = "none",
     title: str = "",
+    allow_row_level: bool = False,
 ) -> dict[str, Any]:
     """Deterministically build and validate a standard Plotly visualization from exact columns."""
     available = [str(c) for c in df.columns]
-    if chart_type != "heatmap" and not x:
+    rows_total = int(len(df))
+    rows_considered = rows_total
+
+    if chart_type == "histogram" and not x and y:
+        x, y = y, None
+
+    if chart_type in {"bar", "scatter", "line"} and not x:
         raise ValueError(
             f"Chart type '{chart_type}' requires an 'x' column. Available: {available}"
         )
+    if chart_type == "histogram" and not x:
+        raise ValueError(f"Chart type 'histogram' requires an 'x' column. Available: {available}")
+    if chart_type in {"box", "violin"} and not (x or y):
+        raise ValueError(f"Chart type '{chart_type}' requires 'x' or 'y'. Available: {available}")
+
     for col_arg, label in ((x, "x"), (y, "y"), (color, "color")):
         if chart_type == "heatmap" and label in {"x", "y"}:
             continue
@@ -101,58 +134,45 @@ def build_standard_chart(
             raise ValueError(f"Column '{col_arg}' for '{label}' not found. Available: {available}")
 
     if chart_type == "histogram":
-        series = pd.to_numeric(df[x], errors="coerce").dropna()
-        if series.empty:
-            raise ValueError(f"Column '{x}' has no numeric values to plot in a histogram.")
-        plot_df = df[df[x].notna()].copy()
+        cols = [c for c in (x, color) if c]
+        plot_df = df[list(dict.fromkeys(cols))].copy()
         plot_df[x] = pd.to_numeric(plot_df[x], errors="coerce")
-        plot_df = plot_df.dropna(subset=[x])
+        plot_df = plot_df.dropna(subset=[x] + ([color] if color else []))
+        if plot_df.empty:
+            raise ValueError(f"Column '{x}' has no numeric values to plot in a histogram.")
         resolved_title = title.strip() or f"Distribution of {x}"
         fig = px.histogram(
             plot_df,
             x=x,
             color=color,
             marginal="box" if color is None else None,
-            nbins=min(40, max(10, int(series.nunique() ** 0.5) + 5)),
+            nbins=min(40, max(10, int(plot_df[x].nunique() ** 0.5) + 5)),
             color_discrete_sequence=["#0F766E"],
             labels={x: x},
         )
         fig.update_yaxes(title_text="Count")
-        return _encode_figure(fig, resolved_title, "histogram")
+        payload = _encode_figure(fig, resolved_title, "histogram")
+        return _attach_chart_metadata(
+            payload,
+            rows_total=rows_total,
+            rows_considered=rows_considered,
+            rows_plotted=len(plot_df),
+            points_rendered=len(plot_df),
+            x_min=str(plot_df[x].min()),
+            x_max=str(plot_df[x].max()),
+        )
 
     if chart_type == "bar":
-        if agg_func != "none" and y:
-            if agg_func == "count":
-                grouped = df.groupby(x, dropna=False)[y].count().reset_index(name="value")
-                y_label = f"Count of {y}"
-            else:
-                work = df[[x, y]].copy()
-                work[y] = pd.to_numeric(work[y], errors="coerce")
-                work = work.dropna(subset=[y])
-                if work.empty:
-                    raise ValueError(f"Column '{y}' has no numeric values for '{agg_func}'.")
-                grouped = (
-                    getattr(work.groupby(x, dropna=False)[y], agg_func)()
-                    .reset_index(name="value")
-                    .sort_values("value", ascending=False)
-                )
-                y_label = f"{agg_func.title()} of {y}"
-            plot_df = grouped.head(30)
-            plot_df[x] = plot_df[x].astype(str)
-            resolved_title = title.strip() or f"{y_label} by {x}"
-            fig = px.bar(
-                plot_df,
-                x=x,
-                y="value",
-                color="value",
-                color_continuous_scale="Teal",
-                labels={x: x, "value": y_label},
-            )
-            fig.update_layout(showlegend=False)
-            return _encode_figure(fig, resolved_title, "bar")
         if y is None:
-            counts = df[x].astype(str).value_counts().head(25).reset_index()
+            if agg_func in {"sum", "mean", "median"}:
+                raise ValueError(
+                    f"Bar chart with agg_func='{agg_func}' requires a numeric 'y' column."
+                )
+            cat_series = df[x].fillna("(Missing)").astype(str)
+            vc = cat_series.value_counts()
+            counts = vc.head(25).reset_index()
             counts.columns = [x, "count"]
+            plotted_obs = int(counts["count"].sum())
             resolved_title = title.strip() or f"Count by {x}"
             fig = px.bar(
                 counts,
@@ -162,34 +182,145 @@ def build_standard_chart(
                 color_continuous_scale="Teal",
                 labels={x: x, "count": "Count"},
             )
+            fig.update_yaxes(title_text="Count")
             fig.update_layout(showlegend=False)
-            return _encode_figure(fig, resolved_title, "bar")
-        plot_df = df[[c for c in (x, y, color) if c is not None]].dropna().head(100).copy()
-        if plot_df.empty:
-            raise ValueError(f"No non-null rows available for bar chart of {x} vs {y}.")
-        resolved_title = title.strip() or f"{y} by {x}"
-        fig = px.bar(plot_df, x=x, y=y, color=color, labels={x: x, y: y})
-        return _encode_figure(fig, resolved_title, "bar")
+            payload = _encode_figure(fig, resolved_title, "bar")
+            return _attach_chart_metadata(
+                payload,
+                rows_total=rows_total,
+                rows_considered=rows_considered,
+                rows_plotted=plotted_obs,
+                points_rendered=len(counts),
+                groups_plotted=len(counts),
+                agg_func="count",
+            )
+
+        if agg_func != "none":
+            work = df[[x, y]].copy()
+            work[x] = work[x].fillna("(Missing)").astype(str)
+            if agg_func == "count":
+                work = work.dropna(subset=[y])
+                if work.empty:
+                    raise ValueError(f"Column '{y}' has no non-null values for 'count'.")
+                grouped = (
+                    work.groupby(x, dropna=False)[y]
+                    .count()
+                    .reset_index(name="value")
+                    .sort_values("value", ascending=False)
+                )
+                y_label = f"Count of {y}"
+            else:
+                work[y] = pd.to_numeric(work[y], errors="coerce")
+                work = work.dropna(subset=[y])
+                if work.empty:
+                    raise ValueError(f"Column '{y}' has no numeric values for '{agg_func}'.")
+                grouped = (
+                    getattr(work.groupby(x, dropna=False)[y], agg_func)()
+                    .reset_index(name="value")
+                    .sort_values("value", ascending=False)
+                )
+                agg_title_map = {
+                    "sum": f"Total {y}",
+                    "mean": f"Mean {y}",
+                    "median": f"Median {y}",
+                }
+                y_label = agg_title_map.get(agg_func, f"{agg_func.title()} of {y}")
+            plot_df = grouped.head(30).copy()
+            plotted_obs = int(work[work[x].isin(set(plot_df[x]))].shape[0])
+            resolved_title = title.strip() or f"{y_label} by {x}"
+            fig = px.bar(
+                plot_df,
+                x=x,
+                y="value",
+                color="value",
+                color_continuous_scale="Teal",
+                labels={x: x, "value": y_label},
+            )
+            fig.update_yaxes(title_text=y_label)
+            fig.update_layout(showlegend=False)
+            payload = _encode_figure(fig, resolved_title, "bar")
+            return _attach_chart_metadata(
+                payload,
+                rows_total=rows_total,
+                rows_considered=rows_considered,
+                rows_plotted=plotted_obs,
+                points_rendered=len(plot_df),
+                groups_plotted=len(plot_df),
+                agg_func=agg_func,
+            )
+
+        # agg_func == "none" with explicit y: forbid silent stacked overlapping category segments
+        cols = [c for c in (x, y, color) if c is not None]
+        raw_df = df[list(dict.fromkeys(cols))].copy()
+        raw_df[y] = pd.to_numeric(raw_df[y], errors="coerce")
+        raw_df = raw_df.dropna(subset=[c for c in (x, y, color) if c is not None]).copy()
+        if raw_df.empty:
+            raise ValueError(f"No valid numeric '{y}' rows available for bar chart of {x} vs {y}.")
+        raw_df[x] = raw_df[x].astype(str)
+        if color:
+            raw_df[color] = raw_df[color].astype(str)
+        dup_key = [x, color] if color else [x]
+        has_repeats = bool(raw_df.duplicated(subset=dup_key).any())
+        if has_repeats and not allow_row_level:
+            raise ValueError(
+                f"Column '{x}' has repeated categories across {len(raw_df)} rows; "
+                "bar chart with agg_func='none' would stack overlapping row segments and "
+                "mislead totals. Specify agg_func='sum', 'mean', 'median', or 'count' "
+                "(or set allow_row_level=True if an explicit row-level plot was intended)."
+            )
+        plot_df = raw_df.head(100).copy()
+        y_axis_label = f"{y} (Row Value)" if has_repeats else y
+        resolved_title = title.strip() or (
+            f"{y} by {x} (Row-Level)" if has_repeats else f"{y} by {x}"
+        )
+        fig = px.bar(
+            plot_df,
+            x=x,
+            y=y,
+            color=color,
+            barmode="group" if has_repeats and color else "relative",
+            labels={x: x, y: y_axis_label},
+        )
+        fig.update_yaxes(title_text=y_axis_label)
+        payload = _encode_figure(fig, resolved_title, "bar")
+        return _attach_chart_metadata(
+            payload,
+            rows_total=rows_total,
+            rows_considered=rows_considered,
+            rows_plotted=len(plot_df),
+            points_rendered=len(plot_df),
+            agg_func="none",
+        )
 
     if chart_type in {"box", "violin"}:
         target_col = y or x
-        num_vals = pd.to_numeric(df[target_col], errors="coerce")
-        if num_vals.dropna().empty:
-            raise ValueError(f"Column '{target_col}' has no numeric values for {chart_type} plot.")
-        cols = [c for c in (x, y, color) if c is not None]
-        plot_df = df[list(dict.fromkeys(cols))].dropna().copy()
+        cols = [c for c in (x, y, color) if c]
+        plot_df = df[list(dict.fromkeys(cols))].copy()
         plot_df[target_col] = pd.to_numeric(plot_df[target_col], errors="coerce")
-        plot_df = plot_df.dropna(subset=[target_col])
+        plot_df = plot_df.dropna(subset=list(dict.fromkeys(cols)))
+        if plot_df.empty:
+            raise ValueError(
+                f"Column '{target_col}' has no non-null numeric values for {chart_type} plot."
+            )
+        if x and y and x != y:
+            plot_df[x] = plot_df[x].astype(str)
         resolved_title = title.strip() or f"{target_col} ({chart_type.title()} Plot)"
         fn = px.box if chart_type == "box" else px.violin
         fig = fn(
             plot_df,
-            x=x if y else None,
-            y=y or x,
+            x=x if (x and y and x != y) else None,
+            y=target_col,
             color=color,
             labels={k: k for k in cols},
         )
-        return _encode_figure(fig, resolved_title, chart_type)
+        payload = _encode_figure(fig, resolved_title, chart_type)
+        return _attach_chart_metadata(
+            payload,
+            rows_total=rows_total,
+            rows_considered=rows_considered,
+            rows_plotted=len(plot_df),
+            points_rendered=len(plot_df),
+        )
 
     if chart_type in {"scatter", "line"}:
         if y is None:
@@ -204,15 +335,21 @@ def build_standard_chart(
         fn = px.scatter if chart_type == "scatter" else px.line
         fig = fn(plot_df, x=x, y=y, color=color, labels={x: x, y: y})
         fig_payload = _encode_figure(fig, resolved_title, chart_type)
-        fig_payload["rows_total"] = int(len(df))
-        fig_payload["rows_plotted"] = int(len(plot_df))
         try:
-            fig_payload["x_min"] = str(plot_df[x].min())
-            fig_payload["x_max"] = str(plot_df[x].max())
+            x_min = str(plot_df[x].min())
+            x_max = str(plot_df[x].max())
         except TypeError:
-            fig_payload["x_min"] = str(plot_df[x].iloc[0])
-            fig_payload["x_max"] = str(plot_df[x].iloc[-1])
-        return fig_payload
+            x_min = str(plot_df[x].iloc[0])
+            x_max = str(plot_df[x].iloc[-1])
+        return _attach_chart_metadata(
+            fig_payload,
+            rows_total=rows_total,
+            rows_considered=rows_considered,
+            rows_plotted=len(plot_df),
+            points_rendered=len(plot_df),
+            x_min=x_min,
+            x_max=x_max,
+        )
 
     if chart_type == "heatmap":
         num_cols = [
@@ -223,6 +360,8 @@ def build_standard_chart(
         if len(num_cols) < 2:
             raise ValueError("Heatmap requires at least 2 numeric columns.")
         corr_df = df[num_cols].astype(float).corr(method="pearson").round(3)
+        if corr_df.isna().all().all():
+            raise ValueError("Correlation heatmap has no computable pairwise correlations.")
         resolved_title = title.strip() or "Pearson Correlation Matrix"
         fig = px.imshow(
             corr_df,
@@ -232,7 +371,15 @@ def build_standard_chart(
             zmax=1,
             aspect="auto",
         )
-        return _encode_figure(fig, resolved_title, "heatmap")
+        plotted_rows = int(df[num_cols].notna().any(axis=1).sum())
+        payload = _encode_figure(fig, resolved_title, "heatmap")
+        return _attach_chart_metadata(
+            payload,
+            rows_total=rows_total,
+            rows_considered=rows_considered,
+            rows_plotted=plotted_rows,
+            points_rendered=int(len(corr_df) * len(corr_df)),
+        )
 
     raise ValueError(f"Unsupported chart_type '{chart_type}'.")
 

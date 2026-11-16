@@ -29,8 +29,13 @@ _AGG_ALIASES: dict[str, str] = {
 _FILTER_OP_ALIASES: dict[str, str] = {
     "=": "==",
     "eq": "==",
+    "is": "==",
     "ne": "!=",
     "<>": "!=",
+    "!": "!=",
+    "not": "!=",
+    "is_not": "!=",
+    "is not": "!=",
     "gt": ">",
     "gte": ">=",
     "ge": ">=",
@@ -109,8 +114,8 @@ class AggregateDataInput(BaseModel):
     filter_op: FilterOpLiteral | None = Field(
         default=None,
         description=(
-            "Optional filter operator ('==', '!=', '>', '>=', '<', '<=', 'in', "
-            "'not_in', 'isna', 'notna', 'contains'). MUST remain null unless filtering rows."
+            "Filter operator ('==','!=','>','>=','<','<=','in','not_in','isna','notna',"
+            "'contains'). Keep exact '>='/'<='; null unless filtering."
         ),
     )
     filter_value: Any = Field(
@@ -251,15 +256,36 @@ class StandardChartInput(BaseModel):
     )
     x: str = Field(
         default="",
-        description="Exact column name for X axis (optional for heatmap).",
+        description="X-axis / histogram column (optional only for heatmap/vertical box).",
     )
-    y: str | None = Field(default=None, description="Optional exact column name for Y axis.")
-    color: str | None = Field(default=None, description="Optional column name for color grouping.")
+    y: str | None = Field(default=None, description="Optional Y-axis column.")
+    color: str | None = Field(default=None, description="Optional color column.")
     agg_func: Literal["none", "count", "sum", "mean", "median"] = Field(
         default="none",
-        description="Aggregation function for bar charts with both x and y.",
+        description=(
+            "Bar aggregation ('sum','mean','median','count' for repeated X; "
+            "'none' only for unique X)."
+        ),
     )
-    title: str = Field(default="", description="Descriptive chart title.")
+    title: str = Field(default="", description="Chart title.")
+    allow_row_level: bool = Field(
+        default=False,
+        description="True only for explicit row-level unaggregated bars.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_single_axis(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        cleaned = dict(data)
+        ctype = str(cleaned.get("chart_type") or "").strip().lower()
+        x_val = str(cleaned.get("x") or "").strip()
+        y_val = str(cleaned.get("y") or "").strip()
+        if ctype == "histogram" and not x_val and y_val:
+            cleaned["x"] = y_val
+            cleaned["y"] = None
+        return cleaned
 
 
 class MLBaselineInput(BaseModel):
@@ -327,6 +353,7 @@ def get_agent_tools(*, include_python_repl: bool = True):
         color: str | None = None,
         agg_func: str = "none",
         title: str = "",
+        allow_row_level: bool = False,
     ) -> str:
         """Create a validated interactive Plotly chart (bar/hist/box/violin/scatter/line/map)."""
         return ""

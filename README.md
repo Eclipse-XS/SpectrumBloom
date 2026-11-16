@@ -106,13 +106,13 @@ After fixing analytical aggregation/correlation/chart-range tools, normalizing e
 
 | Suite | Run | Complete | Answer | Tool Exec | Tool Sel | Grounded | Chart | Retry Rate | Timeouts | P50 (s) | P95 (s) | Peak VRAM (MB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Dev 67 Tasks (`latest_workflow_benchmark`) | 1 | **67/67 (100.0%)** | **67/67 (100.0%)** | **97.0%** | **100.0%** | **100.0%** | **100.0%** | 3.0% | 0 | 15.23 | 32.83 | 2353.0 |
-| Dev 67 Tasks (`latest_workflow_benchmark`) | 2 | **67/67 (100.0%)** | **67/67 (100.0%)** | **97.0%** | **100.0%** | **100.0%** | **100.0%** | 3.0% | 0 | 14.66 | 31.03 | 2353.0 |
-| Holdout 30 Tasks (`holdout_workflow_benchmark`) | 1 | **29/30 (96.7%)** | **30/30 (100.0%)** | **89.5%** | **100.0%** | 96.7% | **100.0%** | 10.0% | 0 | 14.16 | 34.59 | 2416.0 |
-| Independent 28 Tasks (`independent_workflow_benchmark`) | 1 | **27/28 (96.4%)** | **27/28 (96.4%)** | **96.3%** | **100.0%** | **100.0%** | **100.0%** | 3.6% | 0 | 10.02 | 19.27 | 2416.0 |
-| Independent 28 Tasks (`independent_workflow_benchmark`) | 2 | **27/28 (96.4%)** | **27/28 (96.4%)** | **96.3%** | **100.0%** | **100.0%** | **100.0%** | 3.6% | 0 | 10.87 | 23.54 | 2416.0 |
+| Dev 67 Tasks (`latest_workflow_benchmark`) | 1 | **67/67 (100.0%)** | **67/67 (100.0%)** | **97.0%** | **100.0%** | **100.0%** | **100.0%** | 3.0% | 0 | 11.25 | 23.01 | 2341.0 |
+| Dev 67 Tasks (`latest_workflow_benchmark`) | 2 | **67/67 (100.0%)** | **67/67 (100.0%)** | **97.0%** | **100.0%** | **100.0%** | **100.0%** | 3.0% | 0 | 11.06 | 23.45 | 2341.0 |
+| Holdout 30 Tasks (`holdout_workflow_benchmark`) | 1 | **29/30 (96.7%)** | **29/30 (96.7%)** | **97.3%** | **100.0%** | **100.0%** | **100.0%** | 3.3% | 0 | 13.55 | 28.57 | 2337.0 |
+| Independent 28 Tasks (`independent_workflow_benchmark`) | 1 | **28/28 (100.0%)** | **28/28 (100.0%)** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **0.0%** | 0 | **9.75** | **15.66** | 2337.0 |
+| Independent 28 Tasks (`independent_workflow_benchmark`) | 2 | **28/28 (100.0%)** | **28/28 (100.0%)** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **0.0%** | 0 | **9.59** | **16.36** | 2337.0 |
 
-See [docs/optimization-report.md](docs/optimization-report.md) for per-category scores, honest remaining failures (`hold_co2_05_chart` grounding on Holdout; `ind_grid_11_ratio` category-preview omission on Independent), historical 8-task quantization sweeps, analytical 4 GB VRAM/QLoRA budgets, and execution-verified SFT trajectories ([`benchmarks/distilled_eda_sft.jsonl`](benchmarks/distilled_eda_sft.jsonl)).
+See [docs/optimization-report.md](docs/optimization-report.md) for per-category scores, honest remaining Holdout variance (`hold_co2_04_diff`), historical 8-task quantization sweeps, analytical 4 GB VRAM/QLoRA budgets, and execution-verified SFT trajectories ([`benchmarks/distilled_eda_sft.jsonl`](benchmarks/distilled_eda_sft.jsonl)).
 
 ---
 
@@ -124,7 +124,7 @@ See [docs/optimization-report.md](docs/optimization-report.md) for per-category 
 | Angular 22 + TypeScript Workspace (`frontend/`) | Verified | Typecheck, Jasmine/Karma specs, production `ng build`, deterministic CI Playwright suite + live FastAPI/Ollama/Docker Playwright E2E |
 | Security Isolation & Integrity Suite (atomic upload, optimistic concurrency, cache eviction, sandbox & auth bounds) | Verified | `tests/unit/test_concurrency_and_integrity.py`, `tests/unit/test_sandbox_security.py`, `tests/unit/test_security_config.py`, `tests/integration/test_docker_sandbox.py` |
 | Isolated Docker Compose Stack (`frontend` Nginx `:8501` → `api` → `sandbox-executor` → `spectrumbloom-sandbox`) | Verified E2E | Live `docker compose up -d --build --wait`, `/health`, `401` auth guard, sample CSV upload, Playwright UI smoke (zero token in `localStorage`/bundle), live `python_repl` query via `remote` sandbox |
-| 67-Task Dev (`×2`) + 30-Task Holdout + 28-Task Independent (`×2`) Agent Evaluations | Measured | `qwen3:4b-instruct` inside `DockerSandbox` (`67/67 = 100.0%` Dev, `29/30 = 96.7%` Holdout, `27/28 = 96.4%` Independent) in [`latest_workflow_benchmark.json`](benchmarks/results/latest_workflow_benchmark.json), [`holdout_workflow_benchmark.json`](benchmarks/results/holdout_workflow_benchmark.json) & [`independent_workflow_benchmark.json`](benchmarks/results/independent_workflow_benchmark.json) |
+| 67-Task Dev (`×2`) + 30-Task Holdout + 28-Task Independent (`×2`) Agent Evaluations | Measured | `qwen3:4b-instruct` inside `DockerSandbox` (`67/67 = 100.0%` Dev, `29/30 = 96.7%` Holdout w/ `97.3%` tool exec, `28/28 = 100.0%` Independent) in [`latest_workflow_benchmark.json`](benchmarks/results/latest_workflow_benchmark.json), [`holdout_workflow_benchmark.json`](benchmarks/results/holdout_workflow_benchmark.json) & [`independent_workflow_benchmark.json`](benchmarks/results/independent_workflow_benchmark.json) |
 | Historical 8-Task Quantization Sweep (`Q2_K` / `Q4_K_M` / `Q8_0` / `Qwen3-4B`) | Measured | Baseline microbenchmark in [`benchmarks/results/latest_benchmark.json`](benchmarks/results/latest_benchmark.json) & `latest_tool_benchmark.json` |
 | Inference VRAM Budget & QLoRA Memory Table (`vram_budget.py`, `qlora.py`) | Analytical estimate | Formula-based VRAM bounds + `qlora.py --check-only`; CUDA weight updates **not run** |
 | SFT Trajectory Distillation (`distillation.py`) | Executed (dataset only) | Generated `6/8` execution-verified JSONL examples; downstream PyTorch QLoRA fine-tuning **not run** |

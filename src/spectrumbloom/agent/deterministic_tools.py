@@ -168,7 +168,7 @@ def run_aggregate_data(
 
     rows_matched = int(len(work))
     if rows_matched == 0:
-        return {
+        empty_payload: dict[str, Any] = {
             "rows_matched": 0,
             "total_dataset_rows": int(len(df)),
             "filters_applied": filters_applied,
@@ -179,6 +179,15 @@ def run_aggregate_data(
             "value": 0 if agg_func == "count" else None,
             "groups": [] if group_cols else None,
         }
+        if filter_column and filter_op in {"==", "in", "contains"}:
+            f_col = _validate_column(df, filter_column)
+            if not pd.api.types.is_numeric_dtype(df[f_col]):
+                vc = df[f_col].dropna().astype(str).value_counts()
+                empty_payload["available_categories"] = [
+                    {"value": str(k), "count": int(v)} for k, v in vc.head(20).items()
+                ]
+                empty_payload["total_unique_categories"] = int(len(vc))
+        return sanitize_json_payload(empty_payload)
 
     if not group_cols:
         if agg_func == "count":
@@ -468,6 +477,17 @@ def format_statistical_focus(
     if columns:
         valid_cols = [_validate_column(df, c) for c in columns]
         col_profiles = [cp.model_dump() for cp in profile.column_profiles if cp.name in valid_cols]
+        category_domains: dict[str, Any] = {}
+        for col_name in valid_cols:
+            if not pd.api.types.is_numeric_dtype(df[col_name]):
+                vc = df[col_name].dropna().astype(str).value_counts()
+                category_domains[col_name] = {
+                    "total_unique": int(len(vc)),
+                    "is_exhaustive": int(len(vc)) <= 100,
+                    "distinct_values": [
+                        {"value": str(val), "count": int(cnt)} for val, cnt in vc.head(100).items()
+                    ],
+                }
         outliers = [o.model_dump() for o in report.outliers if o.column in valid_cols]
         normality = [n.model_dump() for n in report.normality_checks if n.column in valid_cols]
         missing = [
@@ -489,6 +509,7 @@ def format_statistical_focus(
         return sanitize_json_payload(
             {
                 "columns": col_profiles,
+                "category_domains": category_domains or None,
                 "missingness": missing,
                 "outliers": outliers,
                 "normality_checks": normality,
