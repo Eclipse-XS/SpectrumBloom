@@ -142,32 +142,17 @@ def run_aggregate_data(
 
     metric_col = _validate_column(work, metric_column) if metric_column else None
     numeric_aggs = {"sum", "mean", "median", "min", "max", "std"}
-
-    if agg_func in numeric_aggs:
-        if metric_col is None:
-            raise ValueError(f"Aggregation '{agg_func}' requires 'metric_column'.")
-        coerced = pd.to_numeric(work[metric_col], errors="coerce")
-        valid_mask = coerced.notna()
-        nulls_excluded = int((~valid_mask).sum())
-        if valid_mask.sum() == 0:
-            if len(work) == 0 and filter_column and filter2_column:
-                raise ValueError(
-                    f"No rows matched combined AND filters {filters_applied}. "
-                    "Note: filter and filter2 combine with logical AND; to compare two disjoint "
-                    "subsets (e.g., X >= T vs X < T), invoke aggregate_data TWICE separately."
-                )
-            raise ValueError(
-                f"Column '{metric_col}' contains no numeric values for '{agg_func}' "
-                f"(after filtering {len(work)} rows, filters={filters_applied})."
-            )
-        calc_df = work.loc[valid_mask].copy()
-        calc_df[metric_col] = coerced.loc[valid_mask]
-    else:
-        calc_df = work
-        nulls_excluded = int(work[metric_col].isna().sum()) if metric_col else 0
+    if agg_func in numeric_aggs and metric_col is None:
+        raise ValueError(f"Aggregation '{agg_func}' requires 'metric_column'.")
 
     rows_matched = int(len(work))
     if rows_matched == 0:
+        if filter_column and filter2_column:
+            raise ValueError(
+                f"No rows matched combined AND filters {filters_applied}. "
+                "Note: filter and filter2 combine with logical AND; to compare two disjoint "
+                "subsets (e.g., X >= T vs X < T), invoke aggregate_data TWICE separately."
+            )
         empty_payload: dict[str, Any] = {
             "rows_matched": 0,
             "total_dataset_rows": int(len(df)),
@@ -187,7 +172,31 @@ def run_aggregate_data(
                     {"value": str(k), "count": int(v)} for k, v in vc.head(20).items()
                 ]
                 empty_payload["total_unique_categories"] = int(len(vc))
+            else:
+                num_vals = pd.to_numeric(df[f_col], errors="coerce").dropna()
+                if not num_vals.empty:
+                    empty_payload["available_range"] = {
+                        "min": round(float(num_vals.min()), 6),
+                        "max": round(float(num_vals.max()), 6),
+                        "nunique": int(num_vals.nunique()),
+                    }
         return sanitize_json_payload(empty_payload)
+
+    if agg_func in numeric_aggs:
+        assert metric_col is not None
+        coerced = pd.to_numeric(work[metric_col], errors="coerce")
+        valid_mask = coerced.notna()
+        nulls_excluded = int((~valid_mask).sum())
+        if valid_mask.sum() == 0:
+            raise ValueError(
+                f"Column '{metric_col}' contains no numeric values for '{agg_func}' "
+                f"(after filtering {len(work)} rows, filters={filters_applied})."
+            )
+        calc_df = work.loc[valid_mask].copy()
+        calc_df[metric_col] = coerced.loc[valid_mask]
+    else:
+        calc_df = work
+        nulls_excluded = int(work[metric_col].isna().sum()) if metric_col else 0
 
     if not group_cols:
         if agg_func == "count":

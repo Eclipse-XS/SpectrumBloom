@@ -1121,3 +1121,523 @@ def test_categorical_preview_domain_boundaries_and_tool_reliability_guards() -> 
     hist_in = StandardChartInput.model_validate({"chart_type": "histogram", "y": "co2"})
     assert hist_in.x == "co2"
     assert hist_in.y is None
+
+
+def test_exact_comparison_guards_and_synthesis_completeness() -> None:
+    import pandas as pd
+    from langchain_core.messages import AIMessage as LCAIMessage
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    from spectrumbloom.agent.deterministic_tools import run_aggregate_data
+    from spectrumbloom.agent.graph import (
+        EDAAgentGraph,
+        _check_spurious_filter,
+        _collect_trace_operand_values,
+        _count_single_subset_aggregates,
+    )
+    from spectrumbloom.eda.profiler import format_profile_for_prompt, profile_dataframe
+    from spectrumbloom.eda.statistics import compute_statistics
+    from spectrumbloom.sandbox.service import DisabledSandbox
+    from spectrumbloom.services.eval_service import evaluate_turn_deterministically
+
+    df = pd.DataFrame(
+        {
+            "yr": [1965, 1965, 1980, 1995, 1995],
+            "grp": ["East", "East", "Central", "West", "West"],
+            "measurement": [10.0, 20.0, 50.0, 55.0, 65.0],
+        }
+    )
+    prof = profile_dataframe(df, filename="series.csv")
+    rep = compute_statistics(df, prof)
+    ctx = format_profile_for_prompt(prof, df)
+
+    # 1. Range filter guards: reject unrequested '>' threshold, '>=' without range cues,
+    #    comparative "difference between" phrasing, and exact-value follow-up after an earlier
+    #    range turn, while permitting explicit range queries and continuation follow-ups.
+    q_years = "Compute mean measurement in yr 1995 vs yr 1965 and report the difference."
+    err_unreq_val = _check_spurious_filter(
+        [HumanMessage(content=q_years)],
+        q_years,
+        {"filter_column": "yr", "filter_op": ">", "filter_value": 1964},
+    )
+    assert err_unreq_val is not None and "Unrequested range filter rejected" in err_unreq_val
+
+    err_no_cue = _check_spurious_filter(
+        [HumanMessage(content=q_years)],
+        q_years,
+        {"filter_column": "yr", "filter_op": ">=", "filter_value": 1965},
+    )
+    assert err_no_cue is not None and "Unrequested range filter rejected" in err_no_cue
+
+    q_between_cmp = "What is the difference in mean measurement between yr 1995 and yr 1965?"
+    err_between_cmp = _check_spurious_filter(
+        [HumanMessage(content=q_between_cmp)],
+        q_between_cmp,
+        {"filter_column": "yr", "filter_op": "<", "filter_value": 1965},
+    )
+    assert err_between_cmp is not None and "Unrequested range filter rejected" in err_between_cmp
+
+    err_after_range_turn = _check_spurious_filter(
+        [
+            HumanMessage(content="Filter to rows with yr >= 1980."),
+            LCAIMessage(content="Filtered count is 3."),
+            HumanMessage(content=q_years),
+        ],
+        q_years,
+        {"filter_column": "yr", "filter_op": "<", "filter_value": 1965},
+    )
+    assert (
+        err_after_range_turn is not None
+        and "Unrequested range filter rejected" in err_after_range_turn
+    )
+
+    ok_followup = _check_spurious_filter(
+        [
+            HumanMessage(content="Filter to rows with yr >= 1980."),
+            LCAIMessage(content="Filtered count is 3."),
+            HumanMessage(content="Still filtering to yr >= 1980, what is mean measurement?"),
+        ],
+        "Still filtering to yr >= 1980, what is mean measurement?",
+        {"filter_column": "yr", "filter_op": ">=", "filter_value": 1980},
+    )
+    assert ok_followup is None
+
+    ok_between_range = _check_spurious_filter(
+        [HumanMessage(content="Filter rows with measurement between 15 and 60.")],
+        "Filter rows with measurement between 15 and 60.",
+        {"filter_column": "measurement", "filter_op": ">=", "filter_value": 15},
+    )
+    assert ok_between_range is None
+
+    # Period-terminated numeric threshold (e.g. '<= 5000. How many match?') must be accepted
+    ok_period_threshold = _check_spurious_filter(
+        [
+            HumanMessage(
+                content="Filter to rows with yr >= 1965 and measurement <= 5000. How many match?"
+            )
+        ],
+        "Filter to rows with yr >= 1965 and measurement <= 5000. How many match?",
+        {"filter_column": "measurement", "filter_op": "<=", "filter_value": 5000},
+    )
+    assert ok_period_threshold is None
+
+    # Missing numeric year returns clean rows_matched=0 + available_range without ValueError
+    missing_yr = run_aggregate_data(
+        df,
+        metric_column="measurement",
+        agg_func="mean",
+        filter_column="yr",
+        filter_op="==",
+        filter_value=2099,
+    )
+    assert missing_yr["rows_matched"] == 0
+    assert missing_yr["value"] is None
+    assert missing_yr["available_range"]["min"] == 1965.0
+    assert missing_yr["available_range"]["max"] == 1995.0
+
+    # Schema-aware operand extraction finds exact requested targets even inside >25-group mapping
+    large_mapping = {str(1960 + i): float(300 + i) for i in range(40)}
+    extracted_ops = _collect_trace_operand_values(
+        [{"tool": "aggregate_data", "error": None, "result": {"mapping": large_mapping}}],
+        q_years,
+    )
+    assert extracted_ops == [305.0, 335.0]
+
+    # Missing-group trace (rows_matched=0) still counts as a checked subset so no spurious 2nd nudge
+    sub_cnt, _ = _count_single_subset_aggregates(
+        [
+            {
+                "tool": "aggregate_data",
+                "error": None,
+                "result": {"filters_applied": ["grp == 'East'"], "rows_matched": 2, "value": 15.0},
+            },
+            {
+                "tool": "aggregate_data",
+                "error": None,
+                "result": {
+                    "filters_applied": ["grp == 'NonExistent'"],
+                    "rows_matched": 0,
+                    "value": None,
+                },
+            },
+        ]
+    )
+    assert sub_cnt == 2
+
+    # 2. Full graph flow: rejects unrequested 'yr > 1964', nudges when only 1 subset run,
+    #    and nudges synthesis when difference/ratio misses computed result.
+    class _ComparisonLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_bad_range",
+                            "name": "aggregate_data",
+                            "args": {
+                                "metric_column": "measurement",
+                                "agg_func": "mean",
+                                "filter_column": "yr",
+                                "filter_op": ">",
+                                "filter_value": 1964,
+                            },
+                        }
+                    ],
+                )
+            if self.calls == 2:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_1995",
+                            "name": "aggregate_data",
+                            "args": {
+                                "metric_column": "measurement",
+                                "agg_func": "mean",
+                                "filter_column": "yr",
+                                "filter_op": "==",
+                                "filter_value": 1995,
+                            },
+                        }
+                    ],
+                )
+            if self.calls == 3:
+                # Try stopping after only retrieving 1995 -> triggers second-subset nudge!
+                return LCAIMessage(content="Mean measurement in 1995 is 60.0.")
+            if self.calls == 4:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_1965",
+                            "name": "aggregate_data",
+                            "args": {
+                                "metric_column": "measurement",
+                                "agg_func": "mean",
+                                "filter_column": "yr",
+                                "filter_op": "==",
+                                "filter_value": 1965,
+                            },
+                        }
+                    ],
+                )
+            if self.calls == 5:
+                # Omit difference word/value -> triggers synthesis completeness nudge!
+                return LCAIMessage(content="1995 mean is 60.0 and 1965 mean is 15.0.")
+            return LCAIMessage(
+                content=(
+                    "1995 mean is 60.0 and 1965 mean is 15.0; "
+                    "the difference (1995 minus 1965) is 45.0."
+                )
+            )
+
+    graph = EDAAgentGraph(
+        chat_model=_ComparisonLLM(),
+        sandbox=DisabledSandbox(),
+        df_provider=lambda: df,
+        dataset_context_provider=lambda: ctx,
+        stats_provider=lambda: rep,
+        profile_provider=lambda: prof,
+    )
+    res = graph.invoke(query=q_years, thread_id="t_yr_cmp")
+    assert res["status"] == "success"
+    assert res["retries"] == 1
+    assert any("Unrequested range filter" in (t.get("error") or "") for t in res["tool_traces"])
+    assert "60.0" in res["final_answer"]
+    assert "15.0" in res["final_answer"]
+    assert "45.0" in res["final_answer"]
+
+    # Ensure deterministic ToolMessage does not duplicate JSON under both STDOUT and RESULT
+    tool_msgs = [m for m in res["messages"] if isinstance(m, ToolMessage)]
+    assert tool_msgs
+    for tm in tool_msgs:
+        if "RESULT:" in str(tm.content):
+            assert "STDOUT:" not in str(tm.content)
+
+    # 3. Categorical comparison & ratio + missing-group non-fabrication + multi-turn follow-ups
+    class _CategoricalFollowupLLM:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            last_q = next(
+                (str(m.content) for m in reversed(messages) if isinstance(m, HumanMessage)),
+                "",
+            )
+            has_tool_this_turn = isinstance(messages[-1], ToolMessage)
+            if "West" in last_q and "East" in last_q and not has_tool_this_turn:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_grp_ratio",
+                            "name": "aggregate_data",
+                            "args": {
+                                "metric_column": "measurement",
+                                "agg_func": "mean",
+                                "group_by": "grp",
+                            },
+                        }
+                    ],
+                )
+            if "West" in last_q and "East" in last_q:
+                return LCAIMessage(
+                    content="West mean is 60.0 and East mean is 15.0, giving a ratio of 4.0."
+                )
+            if "NonExistent" in last_q and not has_tool_this_turn:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_missing",
+                            "name": "aggregate_data",
+                            "args": {
+                                "metric_column": "measurement",
+                                "agg_func": "mean",
+                                "filter_column": "grp",
+                                "filter_op": "==",
+                                "filter_value": "NonExistent",
+                            },
+                        }
+                    ],
+                )
+            if "NonExistent" in last_q:
+                return LCAIMessage(
+                    content=(
+                        "No rows matched grp == 'NonExistent'; "
+                        "available categories are East, Central, and West."
+                    )
+                )
+            if "ratio" in last_q.lower() and not has_tool_this_turn:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_fu_central_ratio",
+                            "name": "aggregate_data",
+                            "args": {
+                                "metric_column": "measurement",
+                                "agg_func": "mean",
+                                "filter_column": "grp",
+                                "filter_op": "==",
+                                "filter_value": "Central",
+                            },
+                        }
+                    ],
+                )
+            if "ratio" in last_q.lower():
+                return LCAIMessage(
+                    content=(
+                        "Central mean is 50.0 and West mean is 60.0, "
+                        "giving a ratio (West / Central) of 1.2."
+                    )
+                )
+            if not has_tool_this_turn:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_fu_central",
+                            "name": "aggregate_data",
+                            "args": {
+                                "metric_column": "measurement",
+                                "agg_func": "mean",
+                                "filter_column": "grp",
+                                "filter_op": "==",
+                                "filter_value": "Central",
+                            },
+                        }
+                    ],
+                )
+            return LCAIMessage(
+                content=(
+                    "Central mean is 50.0, so West (60.0) minus Central (50.0) "
+                    "is a difference of 10.0."
+                )
+            )
+
+    cat_graph = EDAAgentGraph(
+        chat_model=_CategoricalFollowupLLM(),
+        sandbox=DisabledSandbox(),
+        df_provider=lambda: df,
+        dataset_context_provider=lambda: ctx,
+        stats_provider=lambda: rep,
+        profile_provider=lambda: prof,
+    )
+    r1 = cat_graph.invoke(
+        query="Compare mean measurement for West vs East and state the ratio.",
+        thread_id="t_cat_mt",
+    )
+    assert (
+        "60.0" in r1["final_answer"]
+        and "15.0" in r1["final_answer"]
+        and "4.0" in r1["final_answer"]
+    )
+
+    r2 = cat_graph.invoke(
+        query="Check mean measurement for NonExistent group.",
+        thread_id="t_cat_missing",
+    )
+    assert "No rows matched" in r2["final_answer"]
+
+    r3 = cat_graph.invoke(
+        query="Now compare Central against West from the previous turn and state the difference.",
+        thread_id="t_cat_mt",
+    )
+    ev3 = evaluate_turn_deterministically(
+        query="Now compare Central against West from the previous turn and state the difference.",
+        answer=r3["final_answer"],
+        tool_traces=[ToolTraceItem.model_validate(t) for t in r3["tool_traces"]],
+        figures=[],
+        prior_tool_traces=[ToolTraceItem.model_validate(t) for t in r1["tool_traces"]],
+        status="success",
+    )
+    assert ev3["passed"] is True
+    assert "10.0" in r3["final_answer"]
+
+    r4 = cat_graph.invoke(
+        query="What is the ratio of West from the earlier turn to Central?",
+        thread_id="t_cat_mt",
+    )
+    ev4 = evaluate_turn_deterministically(
+        query="What is the ratio of West from the earlier turn to Central?",
+        answer=r4["final_answer"],
+        tool_traces=[ToolTraceItem.model_validate(t) for t in r4["tool_traces"]],
+        figures=[],
+        prior_tool_traces=[ToolTraceItem.model_validate(t) for t in r1["tool_traces"]],
+        status="success",
+    )
+    assert ev4["passed"] is True
+    assert "1.2" in r4["final_answer"]
+
+
+def test_boundary_matching_tolerance_and_chart_grounding() -> None:
+    """Verify int/float boundary matching, tight operand tolerance, and chart-only grounding."""
+    import pandas as pd
+    from langchain_core.messages import AIMessage as LCAIMessage
+    from langchain_core.messages import HumanMessage
+
+    from spectrumbloom.agent.graph import (
+        EDAAgentGraph,
+        _check_spurious_filter,
+        _num_present_in_text,
+        _value_in_text,
+    )
+    from spectrumbloom.eda.profiler import format_profile_for_prompt, profile_dataframe
+    from spectrumbloom.eda.statistics import compute_statistics
+    from spectrumbloom.sandbox.service import DisabledSandbox
+
+    assert _value_in_text(5, "Count rows with alcohol >= 14.0 and color_intensity > 5.0.") is True
+    assert _value_in_text(5.0, "Count rows with color_intensity > 5.") is True
+    assert _value_in_text(5.2, "Filter x > 5.20") is True
+    assert _value_in_text(5, "Filter x > 5.5") is False
+    assert _value_in_text(5, "Filter x > 5.05") is False
+    assert _value_in_text(5, "Filter x > 50") is False
+    q_range = "Count how many rows have alcohol >= 14.0 and color_intensity > 5.0."
+    assert (
+        _check_spurious_filter(
+            [HumanMessage(content=q_range)],
+            q_range,
+            {
+                "metric_column": "alcohol",
+                "agg_func": "count",
+                "filter_column": "alcohol",
+                "filter_op": ">=",
+                "filter_value": 14.0,
+                "filter2_column": "color_intensity",
+                "filter2_op": ">",
+                "filter2_value": 5,
+            },
+        )
+        is None
+    )
+
+    assert _num_present_in_text(369.354717, [369.35]) is True
+    assert _num_present_in_text(369.354717, [370.865385]) is False
+    assert _num_present_in_text(316.860377, [315.42]) is False
+
+    df = pd.DataFrame(
+        {
+            "category": ["Alpha", "Alpha", "Beta", "Beta"],
+            "revenue": [100.0, 200.0, 300.0, 400.0],
+        }
+    )
+    prof = profile_dataframe(df, filename="chart.csv")
+    rep = compute_statistics(df, prof)
+    ctx = format_profile_for_prompt(prof, df)
+
+    class _ChartHallucinatingLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def bind_tools(self, _tools):
+            return self
+
+        def invoke(self, messages):
+            self.calls += 1
+            last_content = str(getattr(messages[-1], "content", ""))
+            has_chart_tool = any(
+                getattr(m, "type", "") == "tool" and "chart_created" in str(m.content)
+                for m in messages
+            )
+            if not has_chart_tool:
+                return LCAIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tc_chart_only",
+                            "name": "create_standard_chart",
+                            "args": {
+                                "chart_type": "bar",
+                                "x": "category",
+                                "y": "revenue",
+                                "agg_func": "mean",
+                            },
+                        }
+                    ],
+                )
+            if "Never guess or invent per-category values" in last_content:
+                return LCAIMessage(
+                    content=(
+                        "Created a bar chart of mean revenue by category "
+                        "(4 rows_plotted, 2 groups_plotted, 2 points_rendered)."
+                    )
+                )
+            return LCAIMessage(
+                content=(
+                    "Created bar chart (4 rows plotted, 2 groups): "
+                    "1. Alpha: $492.20 2. Beta: $345.00."
+                )
+            )
+
+    chart_graph = EDAAgentGraph(
+        chat_model=_ChartHallucinatingLLM(),
+        sandbox=DisabledSandbox(),
+        df_provider=lambda: df,
+        dataset_context_provider=lambda: ctx,
+        stats_provider=lambda: rep,
+        profile_provider=lambda: prof,
+    )
+    res = chart_graph.invoke(
+        query="Create a bar chart of mean revenue by category.",
+        thread_id="t_chart_ground",
+    )
+    ev = evaluate_turn_deterministically(
+        query="Create a bar chart of mean revenue by category.",
+        answer=res["final_answer"],
+        tool_traces=[ToolTraceItem.model_validate(t) for t in res["tool_traces"]],
+        figures=res["turn_figures"],
+        prior_tool_traces=[],
+        status="success",
+    )
+    assert len(res["turn_figures"]) == 1
+    assert ev["passed"] is True
+    assert "492.20" not in res["final_answer"]

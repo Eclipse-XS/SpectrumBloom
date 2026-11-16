@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-16T10:27:42.086277+00:00",
+  "generated_at": "2026-11-16T21:32:15.753055+00:00",
   "suite": "benchmarks\\eval_suite_60.json",
   "sandbox_backend": "docker",
   "num_ctx": 4096,
@@ -10,7 +10,7 @@
       "num_ctx": 4096,
       "max_tokens": 1024,
       "timeout_seconds": 90,
-      "warmup_seconds": 1.24,
+      "warmup_seconds": 1.4,
       "baseline_vram_mb": 2337.0,
       "loaded_vram_mb": 2337.0,
       "ollama_ps": {
@@ -34,11 +34,11 @@
           "functional_correctness_pct": 100.0,
           "final_answer_correct_count": 67,
           "final_answer_correctness_pct": 100.0,
-          "tool_calls_total": 67,
-          "tool_calls_succeeded": 65,
-          "tool_execution_success_pct": 97.0,
+          "tool_calls_total": 68,
+          "tool_calls_succeeded": 66,
+          "tool_execution_success_pct": 97.1,
           "tool_execution_task_pct": 96.7,
-          "tool_execution_all_tasks_pct": 97.0,
+          "tool_execution_all_tasks_pct": 97.1,
           "tool_selection_correct_count": 67,
           "tool_selection_correctness_pct": 100.0,
           "groundedness_count": 67,
@@ -52,11 +52,11 @@
           "retry_rate_pct": 3.0,
           "total_retries": 2,
           "timeout_count": 0,
-          "latency_mean_s": 13.79,
-          "latency_p50_s": 11.25,
-          "latency_p95_s": 23.01,
-          "peak_host_ram_mb": 385.23,
-          "peak_vram_mb": 2341.0,
+          "latency_mean_s": 16.72,
+          "latency_p50_s": 15.05,
+          "latency_p95_s": 28.23,
+          "peak_host_ram_mb": 354.16,
+          "peak_vram_mb": 2337.0,
           "by_category": {
             "profiling": {
               "total": 6,
@@ -131,7 +131,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.44,
+              "latency_s": 14.72,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -139,7 +139,7 @@
                 "get_statistical_summary"
               ],
               "figure_count": 0,
-              "answer_preview": "The dataset has:\n\n- **180 rows**  \n- **12 columns**  \n- **0 duplicate rows**  \n\nTotal missing cells: 23 (with `customer_age` having 14 missing values and `satisfaction_score` having 9).  \n\nCompleteness: 98.94%."
+              "answer_preview": "The dataset has:\n\n- **180 rows**  \n- **12 columns**  \n- **0 duplicate rows**  \n- **23 missing cells** (completeness: 98.94%)  \n\nMissing values are primarily in `customer_age` (14 missing) and `satisfaction_score` (9 miss"
             },
             {
               "id": "ecom_02_missing",
@@ -157,7 +157,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.5,
+              "latency_s": 12.75,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -165,7 +165,7 @@
                 "get_statistical_summary"
               ],
               "figure_count": 0,
-              "answer_preview": "The columns containing missing values and the number of missing values in each are:\n\n- **customer_age**: 14 missing values (7.78% of total entries)\n- **satisfaction_score**: 9 missing values (5.0% of total entries)\n\nNo o"
+              "answer_preview": "The columns containing missing values and their respective counts are:\n\n- **customer_age**: 14 missing values (7.78% of total entries)\n- **satisfaction_score**: 9 missing values (5.0% of total entries)\n\nNo other columns "
             },
             {
               "id": "ecom_03_filter",
@@ -183,7 +183,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 8.99,
+              "latency_s": 10.6,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -209,7 +209,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.45,
+              "latency_s": 15.05,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -235,7 +235,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.32,
+              "latency_s": 10.36,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -261,7 +261,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.67,
+              "latency_s": 18.29,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -269,7 +269,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 * IQR rule on the `revenue` column, there are **10 outlier rows** (5.56% of the total 180 rows)."
+              "answer_preview": "Using the 1.5 * IQR rule on the `revenue` column, there are **10 outlier rows** (5.56% of the total 180 rows). \n\nThe outliers are identified as revenue values exceeding the upper bound of 1,234.94. The sample outlier val"
             },
             {
               "id": "ecom_07_stat_test",
@@ -287,7 +287,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 21.52,
+              "latency_s": 29.62,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -295,7 +295,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Kruskal-Wallis test comparing revenue across regions yields the following results:\n\n- **Test Statistic**: 1.098648  \n- **P-value**: 0.777401  \n- **Significant at \u03b1 = 0.05?**: No  \n\n### Group Summaries:\n- **East**: 37"
+              "answer_preview": "The Kruskal-Wallis test compares revenue across regional groups (East, North, South, West).  \n\n- **Test Statistic**: 1.098648  \n- **p-value**: 0.777401  \n- **Conclusion**: The result is **not significant** at the 0.05 al"
             },
             {
               "id": "ecom_08_chart",
@@ -313,7 +313,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 14.3,
+              "latency_s": 16.63,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -321,7 +321,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The interactive Plotly bar chart showing **mean revenue by category** has been successfully created.  \n\n- **X-axis**: Category (Electronics, Home, Apparel, Beauty)  \n- **Y-axis**: Mean revenue (in dollars)  \n- **Aggregat"
+              "answer_preview": "The interactive Plotly bar chart showing **mean revenue by category** has been successfully created and is ready to display.  \n\n- **X-axis**: Category (Electronics, Home, Apparel, Beauty)  \n- **Y-axis**: Mean revenue (in"
             },
             {
               "id": "ecom_09_mt1",
@@ -339,7 +339,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.35,
+              "latency_s": 6.33,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -347,7 +347,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The region with the highest total revenue is **West**, with a sum of **$27,209.00**."
+              "answer_preview": "The region with the highest total revenue is **West**, with a sum of **27,209.0**."
             },
             {
               "id": "ecom_10_mt2",
@@ -365,12 +365,11 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 23.65,
+              "latency_s": 9.68,
               "retries": 0,
-              "tool_calls": 2,
+              "tool_calls": 1,
               "tool_errors": 0,
               "tools_used": [
-                "aggregate_data",
                 "aggregate_data"
               ],
               "figure_count": 0,
@@ -392,7 +391,7 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 4.16,
+              "latency_s": 4.61,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
@@ -416,7 +415,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 15.16,
+              "latency_s": 15.79,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -424,7 +423,7 @@
                 "get_statistical_summary"
               ],
               "figure_count": 0,
-              "answer_preview": "The dataset has:\n\n- **344 rows**  \n- **7 columns**  \n- **19 total missing cells** (completeness: 99.21%)  \n- **0 duplicate rows**  \n\nMissing values are distributed across the following columns:  \n- `sex`: 11 missing valu"
+              "answer_preview": "The dataset has:\n\n- **344 rows**  \n- **7 columns**  \n- **19 total missing cells** (with 11 missing in the `sex` column and 2 each in `bill_length_mm`, `bill_depth_mm`, `flipper_length_mm`, and `body_mass_g`)  \n\nCompleten"
             },
             {
               "id": "peng_02_missing",
@@ -442,7 +441,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.09,
+              "latency_s": 6.03,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -468,7 +467,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.45,
+              "latency_s": 12.69,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -494,7 +493,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.88,
+              "latency_s": 10.61,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -520,7 +519,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.0,
+              "latency_s": 12.53,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -528,7 +527,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Pearson correlation coefficient between `flipper_length_mm` and `body_mass_g` is **0.8712**, based on 342 complete pairs of data (excluding 2 rows with missing values). The correlation is statistically significant at"
+              "answer_preview": "The Pearson correlation coefficient between `flipper_length_mm` and `body_mass_g` is **0.871**, based on 342 complete pairs of data (excluding 2 rows with missing values). The correlation is statistically significant at "
             },
             {
               "id": "peng_06_outliers",
@@ -546,7 +545,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.29,
+              "latency_s": 15.96,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -554,7 +553,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 \u00d7 IQR rule, there are **0 outlier values** in the `bill_depth_mm` column. \n\n- Interquartile range (IQR): 3.1 mm  \n- Lower bound: 10.95 mm  \n- Upper bound: 23.35 mm  \nAll values within `bill_depth_mm` fall w"
+              "answer_preview": "Using the 1.5 \u00d7 IQR rule on `bill_depth_mm`, there are **0 outlier values**.  \n\n- Interquartile range (IQR): 3.1 mm  \n- Lower bound: 10.95 mm  \n- Upper bound: 23.35 mm  \nAll data points within `bill_depth_mm` fall within"
             },
             {
               "id": "peng_07_stat_test",
@@ -572,7 +571,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 18.14,
+              "latency_s": 22.62,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -580,7 +579,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The one-way ANOVA test comparing body_mass_g across species groups yields the following results:\n\n- **F-statistic**: 343.63  \n- **p-value**: 0.0 (i.e., statistically significant at \u03b1 = 0.05)  \n\nThis indicates a significa"
+              "answer_preview": "The one-way ANOVA test comparing `body_mass_g` across species groups reveals:\n\n- **F-statistic**: 343.63  \n- **p-value**: 0.0 (i.e., statistically significant at \u03b1 = 0.05)  \n\nThis indicates a significant difference in bo"
             },
             {
               "id": "peng_08_chart",
@@ -598,7 +597,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 19.24,
+              "latency_s": 26.19,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -606,7 +605,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The scatter plot of **flipper_length_mm** (X-axis) versus **body_mass_g** (Y-axis), colored by **species**, has been successfully created.\n\n- **Title**: Flipper Length vs Body Mass by Species  \n- **X-axis range**: 172.0 "
+              "answer_preview": "The scatter plot of **flipper_length_mm** (X-axis) versus **body_mass_g** (Y-axis), colored by **species**, has been successfully created.  \n\n- **Total rows**: 344  \n- **Rows considered**: 344  \n- **Rows excluded**: 2 (d"
             },
             {
               "id": "peng_09_mt1",
@@ -624,7 +623,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.58,
+              "latency_s": 7.59,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -650,7 +649,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.11,
+              "latency_s": 9.31,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -658,7 +657,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "For the island with the most penguins, **Biscoe**, the mean bill_length_mm is **45.26 mm**."
+              "answer_preview": "For the island with the most penguins, **Biscoe**, the mean bill length is **45.26 mm**."
             },
             {
               "id": "peng_11_invalid",
@@ -676,13 +675,13 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.19,
+              "latency_s": 16.42,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
               "tools_used": [],
               "figure_count": 0,
-              "answer_preview": "The column \"nonexistent_feather_weight\" does not exist in the dataset. I cannot perform a Pearson correlation with a non-existent column. Please confirm the correct column name or provide valid input."
+              "answer_preview": "The column \"nonexistent_feather_weight\" does not exist in the dataset. I cannot perform a Pearson correlation with a non-existent column. Please verify the column name or provide a valid column from the dataset: ['specie"
             },
             {
               "id": "bc_01_profile",
@@ -700,7 +699,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.25,
+              "latency_s": 12.25,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -708,7 +707,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The dataset contains a total of 569 records, distributed as follows by diagnosis group:\n\n- **Benign**: 357 records  \n- **Malignant**: 212 records  \n\nThis indicates that the majority of the cases are classified as benign."
+              "answer_preview": "The dataset contains 569 records distributed as follows by diagnosis group:\n\n- **Benign**: 357 records  \n- **Malignant**: 212 records  \n\nThis indicates that the majority of the cases are classified as benign."
             },
             {
               "id": "bc_02_agg",
@@ -726,15 +725,16 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 13.67,
+              "latency_s": 19.83,
               "retries": 0,
-              "tool_calls": 1,
+              "tool_calls": 2,
               "tool_errors": 0,
               "tools_used": [
+                "aggregate_data",
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean of 'mean area' grouped by diagnosis is as follows:\n\n- For **malignant**: 978.38 (mean)\n- For **benign**: 462.79 (mean)\n\nThe difference in mean area between malignant and benign cases is **515.59** (978.38 \u2212 462."
+              "answer_preview": "The mean of 'mean area' is:\n\n- **978.38** for malignant tumors (based on 212 rows).\n- **462.79** for benign tumors (based on 357 rows).\n\nThis indicates that malignant tumors have a significantly larger mean area compared"
             },
             {
               "id": "bc_03_filter",
@@ -752,7 +752,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.17,
+              "latency_s": 15.09,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -772,13 +772,13 @@
               "tool_execution_success": true,
               "tool_selection_correct": true,
               "grounded": true,
-              "numeric_grounding_ratio": 1.0,
+              "numeric_grounding_ratio": 0.8,
               "chart_correct": null,
               "complete_task_success": true,
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 8.91,
+              "latency_s": 11.95,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -786,7 +786,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Pearson correlation between 'mean radius' and 'mean perimeter' is **0.997855**, indicating a very strong positive linear relationship. This correlation is statistically significant at the 0.05 level (p-value = 0.0)."
+              "answer_preview": "The Pearson correlation between 'mean radius' and 'mean perimeter' is **0.9979** (rounded to 4 decimal places), based on 569 complete pairs of data. The p-value is 0.0, indicating a statistically significant positive lin"
             },
             {
               "id": "bc_05_outliers",
@@ -804,7 +804,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.78,
+              "latency_s": 13.65,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -812,7 +812,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 * IQR rule on the 'mean area' column, there are **25 outlier rows**."
+              "answer_preview": "Using the 1.5 * IQR rule on the 'mean area' column, there are **25 outlier rows**.  \n\nThese outliers are values exceeding the upper bound of 1326.3, with sample values including 1404.0, 1878.0, 1509.0, and others. The ou"
             },
             {
               "id": "bc_06_stat_test",
@@ -830,7 +830,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 20.89,
+              "latency_s": 27.58,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -838,7 +838,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Mann-Whitney U test comparing 'mean concavity' between diagnosis groups 'malignant' and 'benign' yields the following results:\n\n- **Test Statistic**: 4705.5  \n- **p-value**: 0.0 (indicating statistical significance a"
+              "answer_preview": "The Mann-Whitney U test comparing *mean concavity* between diagnosis groups reveals:\n\n- **Test Statistic**: 4705.5  \n- **p-value**: 0.0 (exactly 0, indicating statistical significance at \u03b1 = 0.05)  \n- **Result**: Signifi"
             },
             {
               "id": "bc_07_chart",
@@ -856,7 +856,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 16.4,
+              "latency_s": 19.41,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -864,7 +864,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The box plot has been successfully created, showing the distribution of **mean radius** across different **diagnosis** groups.  \n\n- **X-axis**: Diagnosis (likely benign or malignant, based on the dataset).  \n- **Y-axis**"
+              "answer_preview": "The box plot has been successfully created, showing the distribution of **mean radius** across different **diagnosis** groups.  \n\n- **X-axis**: Diagnosis (likely benign or malignant based on the dataset).  \n- **Y-axis**:"
             },
             {
               "id": "bc_08_multistep",
@@ -882,15 +882,16 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 15.72,
+              "latency_s": 26.39,
               "retries": 0,
-              "tool_calls": 1,
+              "tool_calls": 2,
               "tool_errors": 0,
               "tools_used": [
+                "aggregate_data",
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean 'worst area' for benign diagnosis is 558.90, and for malignant diagnosis, it is 1422.29.\n\nThe ratio (malignant mean / benign mean) is:\n\n1422.286321 / 558.89944 \u2248 2.545.\n\nThus, the ratio is **2.545**."
+              "answer_preview": "The mean 'worst area' for malignant diagnosis is 1422.29, and for benign diagnosis is 558.90.  \n\nThe ratio (malignant mean / benign mean) is:  \n1422.29 / 558.90 \u2248 **2.546**."
             },
             {
               "id": "bc_09_mt1",
@@ -908,7 +909,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.19,
+              "latency_s": 17.56,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -916,7 +917,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The median value of 'worst radius' for cases diagnosed as 'malignant' is **20.59**. This result is based on 212 rows in the dataset that satisfy the condition `diagnosis == 'malignant'`."
+              "answer_preview": "The median value of 'worst radius' for cases where diagnosis is 'malignant' is **20.59**. This result is based on 212 rows in the dataset that satisfy the condition `diagnosis == 'malignant'`."
             },
             {
               "id": "bc_10_mt2",
@@ -934,7 +935,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.24,
+              "latency_s": 28.51,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -942,7 +943,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The median value of 'worst radius' for cases diagnosed as 'benign' is **13.35**.  \n\n**Comparison**:  \n- Malignant: median worst radius = **20.59**  \n- Benign: median worst radius = **13.35**  \n\nThis indicates that malign"
+              "answer_preview": "The median value of 'worst radius' for cases where diagnosis is 'benign' is **13.35**.  \n\nComparison with 'malignant':  \n- Malignant: median = **20.59**  \n- Benign: median = **13.35**  \n\nThis indicates that malignant tum"
             },
             {
               "id": "bc_11_invalid",
@@ -960,13 +961,13 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.09,
+              "latency_s": 6.28,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
               "tools_used": [],
               "figure_count": 0,
-              "answer_preview": "The column 'biopsy_stage_missing_col' does not exist in the dataset. The available columns are as listed in the ACTIVE DATASET PROFILE, and 'biopsy_stage_missing_col' is not among them. Please verify the column name or p"
+              "answer_preview": "The column 'biopsy_stage_missing_col' does not exist in the dataset. The available columns are as listed in the ACTIVE DATASET PROFILE. Please verify the column name and try again with an existing column name."
             },
             {
               "id": "wine_01_profile",
@@ -984,7 +985,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 12.22,
+              "latency_s": 16.35,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -992,7 +993,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The wine samples are distributed across the cultivar classes as follows:\n\n- **class_1**: 71 samples  \n- **class_0**: 59 samples  \n- **class_2**: 48 samples  \n\nThis accounts for all 178 wine samples in the dataset."
+              "answer_preview": "There are a total of 178 wine samples, distributed across three cultivar classes as follows:\n\n- **class_1**: 71 samples  \n- **class_0**: 59 samples  \n- **class_2**: 48 samples  \n\nThis distribution is derived from the ful"
             },
             {
               "id": "wine_02_agg",
@@ -1010,7 +1011,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.75,
+              "latency_s": 13.91,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1036,7 +1037,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 16.5,
+              "latency_s": 18.47,
               "retries": 1,
               "tool_calls": 2,
               "tool_errors": 1,
@@ -1063,7 +1064,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 15.77,
+              "latency_s": 17.51,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1071,7 +1072,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Spearman correlation between **total_phenols** and **flavanoids** is **0.8794**, based on 178 complete pairs of data. This indicates a very strong positive monotonic relationship between the two variables. The p-valu"
+              "answer_preview": "The Spearman correlation between **total_phenols** and **flavanoids** is **0.879**, based on 178 complete pairs of data. The p-value is **0.0**, indicating a statistically significant positive monotonic relationship at t"
             },
             {
               "id": "wine_05_outliers",
@@ -1089,7 +1090,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 12.12,
+              "latency_s": 26.41,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1097,7 +1098,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 * IQR rule, **3 rows** are detected as outliers in the `malic_acid` column. These outlier values are [5.8, 5.51, 5.65]."
+              "answer_preview": "Using the 1.5 * IQR rule on the `malic_acid` column, **3 outlier rows** are detected.  \n\n- **Lower bound**: -0.6175  \n- **Upper bound**: 5.3025  \n- The outlier values are: **5.8, 5.51, and 5.65** (all above the upper bou"
             },
             {
               "id": "wine_06_kruskal",
@@ -1109,13 +1110,13 @@
               "tool_execution_success": true,
               "tool_selection_correct": true,
               "grounded": true,
-              "numeric_grounding_ratio": 1.0,
+              "numeric_grounding_ratio": 0.941,
               "chart_correct": null,
               "complete_task_success": true,
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 30.58,
+              "latency_s": 33.01,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1141,7 +1142,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 26.96,
+              "latency_s": 17.02,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1149,7 +1150,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The normality test for the \"proline\" column using the Shapiro-Wilk test yields the following results:\n\n- **Test Statistic**: 0.931186  \n- **p-value**: 0.0 (exactly 0)  \n- **Conclusion**: The distribution is **not normal*"
+              "answer_preview": "The normality test for the \"proline\" column using the Shapiro-Wilk test yields the following results:\n\n- **Sample size**: 178  \n- **Test statistic**: 0.931186  \n- **p-value**: 0.0 (exactly 0)  \n- **Conclusion**: The dist"
             },
             {
               "id": "wine_08_chart",
@@ -1167,7 +1168,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 117.38,
+              "latency_s": 77.23,
               "retries": 0,
               "tool_calls": 2,
               "tool_errors": 0,
@@ -1176,7 +1177,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The heatmap has been successfully generated, visualizing the relationship between alcohol, malic acid, and proline levels in the wine cultivars dataset.  \n\n**Key Details:**  \n- **X-axis:** Alcohol concentration (range: 1"
+              "answer_preview": "The heatmap has been successfully generated, visualizing the relationship between **alcohol** and **malic acid** across wine cultivars, with color intensity reflecting **proline** levels.  \n\n- **Rows considered**: 178 (a"
             },
             {
               "id": "wine_09_mt1",
@@ -1194,7 +1195,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.25,
+              "latency_s": 9.64,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1202,7 +1203,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The cultivar with the lowest mean flavanoids is **class_2**, with a mean value of **0.781458**."
+              "answer_preview": "The cultivar with the lowest mean flavanoids is **class_2**, with a mean flavanoids value of **0.781**."
             },
             {
               "id": "wine_10_mt2",
@@ -1220,7 +1221,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.13,
+              "latency_s": 7.75,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1228,7 +1229,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean color_intensity for the cultivar **class_2** is **7.39625**."
+              "answer_preview": "The mean color_intensity for the cultivar **class_2** is **7.396**."
             },
             {
               "id": "wine_11_invalid",
@@ -1246,13 +1247,13 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 15.38,
+              "latency_s": 19.01,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
               "tools_used": [],
               "figure_count": 0,
-              "answer_preview": "I cannot plot a histogram of 'sugar_residual_g_l' because this column does not exist in the dataset. The available columns are as listed in the dataset profile. If you have any other column or query, please let me know!"
+              "answer_preview": "I cannot plot a histogram of 'sugar_residual_g_l' because this column does not exist in the dataset. The available columns are as listed in the dataset profile. If you have any other questions or need assistance with a v"
             },
             {
               "id": "macro_01_profile",
@@ -1270,7 +1271,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 12.21,
+              "latency_s": 13.72,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1278,7 +1279,7 @@
                 "get_statistical_summary"
               ],
               "figure_count": 0,
-              "answer_preview": "The macroeconomic dataset contains:\n\n- **203 rows** (observations)  \n- **14 columns** (variables)  \n- **0 missing cells** (completeness: 100.0%)  \n- **0 duplicate rows**  \n\nThis indicates a complete and clean dataset wit"
+              "answer_preview": "The macroeconomic dataset contains:\n\n- **203 rows**  \n- **14 columns**  \n- **0 missing cells** (completeness: 100.0%)  \n- **0 duplicate rows**  \n\nThis indicates a complete and clean dataset with no missing or redundant e"
             },
             {
               "id": "macro_02_filter",
@@ -1296,7 +1297,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 14.43,
+              "latency_s": 22.56,
               "retries": 1,
               "tool_calls": 2,
               "tool_errors": 1,
@@ -1305,7 +1306,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "There were **16 quarters** with an unemployment rate (unemp) >= 8.0."
+              "answer_preview": "There were **16 quarters** in the dataset where the unemployment rate (unemp) was greater than or equal to 8.0."
             },
             {
               "id": "macro_03_agg",
@@ -1323,7 +1324,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.75,
+              "latency_s": 8.81,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1349,7 +1350,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.83,
+              "latency_s": 17.91,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1357,7 +1358,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Spearman correlation between realgdp and cpi is **0.999006**, based on 203 complete pairs of data. This indicates a very strong monotonic positive relationship between the two variables. The p-value is 0.0, which is "
+              "answer_preview": "The Spearman correlation between realgdp and cpi is **0.9990**, based on 203 complete pairs of data. The p-value is **0.0**, indicating a statistically significant positive monotonic relationship at the 0.05 significance"
             },
             {
               "id": "macro_05_outliers",
@@ -1375,7 +1376,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.61,
+              "latency_s": 25.69,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1383,7 +1384,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 * IQR rule on the `infl` column, there are **22 outlier quarters**. \n\nThis corresponds to **10.837%** of the data (out of 203 non-null values), with sample outlier values including 9.26, 12.47, 10.39, and o"
+              "answer_preview": "Using the 1.5 * IQR rule on the `infl` column, there are **22 outlier quarters**.  \n\nThese outliers fall outside the range defined by the first quartile (Q1 = 2.27) and third quartile (Q3 = 4.975), with an interquartile "
             },
             {
               "id": "macro_06_normality",
@@ -1401,7 +1402,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 15.13,
+              "latency_s": 22.48,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1409,7 +1410,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The normality test for the `unemp` column using the Shapiro-Wilk test yields the following results:\n\n- **Test Statistic**: 0.95736  \n- **p-value**: 9 \u00d7 10\u207b\u2076  \n- **Is the distribution normal at \u03b1 = 0.05?**: No  \n\nThe p-va"
+              "answer_preview": "The normality test for the `unemp` column (unemployment rate) using the Shapiro-Wilk test yields the following results:\n\n- **Sample size**: 203  \n- **Test statistic**: 0.95736  \n- **p-value**: 9 \u00d7 10\u207b\u2076 (0.000009)  \n- **I"
             },
             {
               "id": "macro_07_chart",
@@ -1427,7 +1428,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.14,
+              "latency_s": 25.3,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1435,7 +1436,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The histogram of `tbilrate` has been successfully created and rendered. It displays the distribution of the Treasury bill rate across 203 data points, spanning from a minimum value of 0.12 to a maximum of 15.33. The full"
+              "answer_preview": "- **chart_kind**: histogram  \n- **x**: tbilrate  \n- **y**: null  \n- **rows_total**: 203  \n- **rows_considered**: 203  \n- **rows_plotted**: 203  \n- **rows_excluded**: 0  \n- **points_rendered**: 203  \n- **x_range**: [\"0.12"
             },
             {
               "id": "macro_08_multistep",
@@ -1453,7 +1454,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 15.35,
+              "latency_s": 19.41,
               "retries": 0,
               "tool_calls": 2,
               "tool_errors": 0,
@@ -1462,7 +1463,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean unemployment rate (unemp) for quarters with year < 2000 is **5.996**, while for quarters with year >= 2000, it is **5.415**. \n\nThus, the mean unemployment rate was higher in the period before 2000 compared to th"
+              "answer_preview": "The mean unemployment rate (unemp) for quarters with year \u2265 2000 is **5.415**.  \nThe mean unemployment rate (unemp) for quarters with year < 2000 is **5.996**.  \n\nThus, the mean unemployment rate decreased from **5.996**"
             },
             {
               "id": "macro_09_mt1",
@@ -1480,7 +1481,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 12.06,
+              "latency_s": 12.44,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1488,7 +1489,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean real GDP for quarters with year \u2265 2000 is **12,319.57** (rounded to two decimal places).  \n\nThis calculation is based on 39 rows (quarters) from the dataset where the year is 2000 or later. No missing values wer"
+              "answer_preview": "The mean real GDP for quarters with year \u2265 2000 is **12,319.57** (in billions of 2005 dollars). This calculation is based on 39 rows (quarters) from the dataset where the year is 2000 or later."
             },
             {
               "id": "macro_10_mt2",
@@ -1506,7 +1507,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 14.17,
+              "latency_s": 11.69,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1514,7 +1515,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The maximum unemployment rate (unemp) for quarters with year \u2265 2000 is **9.6**.  \n\nThis value is derived from 39 rows (quarters) in the dataset where the year is 2000 or later. No missing values were excluded, and the fi"
+              "answer_preview": "The maximum unemployment rate (unemp) for quarters with year \u2265 2000 is **9.6%**. This value is observed across 39 rows (quarters) in the dataset."
             },
             {
               "id": "macro_11_invalid",
@@ -1532,13 +1533,13 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 12.82,
+              "latency_s": 25.21,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
               "tools_used": [],
               "figure_count": 0,
-              "answer_preview": "The column \"nonexistent_bitcoin_price\" does not exist in the dataset. Therefore, no correlation can be computed. I will not proceed with any tool calls for this invalid request."
+              "answer_preview": "The column \"nonexistent_bitcoin_price\" does not exist in the dataset. Available columns are: ['year', 'quarter', 'realgdp', 'realcons', 'realinv', 'realgovt', 'realdpi', 'cpi', 'm1', 'tbilrate', 'unemp', 'pop', 'infl', '"
             },
             {
               "id": "co2_01_profile",
@@ -1556,7 +1557,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.61,
+              "latency_s": 11.43,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1582,7 +1583,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.02,
+              "latency_s": 8.01,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1608,7 +1609,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.41,
+              "latency_s": 13.07,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1616,7 +1617,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "There are **356 rows** in the dataset where `co2 > 360`."
+              "answer_preview": "There are **356 rows** where `co2 > 360`."
             },
             {
               "id": "co2_04_agg",
@@ -1634,7 +1635,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 12.64,
+              "latency_s": 13.5,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1660,7 +1661,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.97,
+              "latency_s": 12.41,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1668,7 +1669,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Pearson correlation coefficient between `year` and `co2` is **0.988239**, based on 2,225 complete pairs of data (excluding 59 rows with missing `co2` values). The p-value is 0.0, indicating a statistically significan"
+              "answer_preview": "The Pearson correlation coefficient between `year` and `co2` is **0.988**, based on 2,225 complete pairs of data (excluding 59 rows with missing values). The p-value is 0.0, indicating a statistically significant positiv"
             },
             {
               "id": "co2_06_outliers",
@@ -1686,7 +1687,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.86,
+              "latency_s": 12.62,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1694,7 +1695,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 \u00d7 IQR rule, no outlier rows exist in the `co2` column.  \n\n- Interquartile range (IQR): 30.0  \n- Lower bound: 279.8  \n- Upper bound: 399.8  \n- Outlier count: **0**  \n- Outlier percentage: **0.0%**  \n\nAll val"
+              "answer_preview": "Using the 1.5 \u00d7 IQR rule, no outlier rows exist in the `co2` column.  \n\n- Interquartile range (IQR): 30.0  \n- Lower bound: 279.8  \n- Upper bound: 399.8  \n- Outlier count: 0  \n- Outlier percentage: 0.0%  \n\nAll values in t"
             },
             {
               "id": "co2_07_normality",
@@ -1712,7 +1713,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 14.25,
+              "latency_s": 15.65,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1720,7 +1721,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The normality test for the `co2` column using the Shapiro-Wilk test yields the following results:\n\n- **Test statistic**: 0.945132  \n- **p-value**: 0.0 (exactly 0)  \n- **Conclusion**: The data is **not normally distribute"
+              "answer_preview": "The normality test for the `co2` column using the Shapiro-Wilk test yields the following results:\n\n- **Test Statistic**: 0.945132  \n- **p-value**: 0.0 (exactly 0)  \n- **Conclusion**: The data is **not normally distribute"
             },
             {
               "id": "co2_08_chart",
@@ -1738,7 +1739,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 17.48,
+              "latency_s": 19.99,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1746,7 +1747,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The Plotly line chart has been successfully created, plotting CO\u2082 levels over time from the `date` column.  \n\n**Chart Details:**  \n- **Title:** CO2 Levels Over Time  \n- **X-axis:** Date (range: 1958-03-29 to 2001-12-29) "
+              "answer_preview": "The Plotly line chart has been successfully created, plotting CO\u2082 levels over time from the `date` column against the `co2` column.  \n\n- **Title**: CO2 Levels Over Time  \n- **X-axis**: Date (range: 1958-03-29 to 2001-12-"
             },
             {
               "id": "co2_09_multistep",
@@ -1764,7 +1765,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 18.72,
+              "latency_s": 17.33,
               "retries": 0,
               "tool_calls": 2,
               "tool_errors": 0,
@@ -1773,7 +1774,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean CO\u2082 level for the year 2000 is **369.35**.  \nThe mean CO\u2082 level for the year 1960 is **316.86**.  \n\nThe difference (2000 minus 1960) is:  \n369.35 - 316.86 = **52.49**.  \n\nThus, the mean CO\u2082 level increased by **"
+              "answer_preview": "The mean CO\u2082 level for the year 2000 is 369.35.  \nThe mean CO\u2082 level for the year 1960 is 316.86.  \nThe difference (2000 minus 1960) is:  \n369.35 - 316.86 = 52.49."
             },
             {
               "id": "co2_10_mt1",
@@ -1791,7 +1792,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 8.24,
+              "latency_s": 8.93,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1799,7 +1800,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "For the year 1990, the mean CO\u2082 level is **354.14**. This value is computed from 52 rows in the dataset that match the condition `year == 1990`."
+              "answer_preview": "For the year 1990, the mean CO\u2082 level is **354.14**. This result is based on 52 rows matching the filter `year == 1990`."
             },
             {
               "id": "co2_11_mt2",
@@ -1817,7 +1818,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.31,
+              "latency_s": 14.29,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1825,7 +1826,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean CO\u2082 level in 1960 is **316.86**.  \n\nComparing this with the mean CO\u2082 in 1990 (**354.14**), the CO\u2082 level increased by **37.28** units, or a **11.77%** rise. This indicates a notable increase in atmospheric CO\u2082 o"
+              "answer_preview": "For the year 1960, the mean CO\u2082 level is **316.86**.  \n\nComparing with 1990:  \n- 1960: mean CO\u2082 = **316.86**  \n- 1990: mean CO\u2082 = **354.14**  \n\nThe mean CO\u2082 level increased by **37.28** units from 1960 to 1990."
             },
             {
               "id": "co2_12_invalid",
@@ -1843,7 +1844,7 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.39,
+              "latency_s": 8.48,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
@@ -1861,10 +1862,10 @@
           "final_answer_correct_count": 67,
           "final_answer_correctness_pct": 100.0,
           "tool_calls_total": 67,
-          "tool_calls_succeeded": 65,
-          "tool_execution_success_pct": 97.0,
-          "tool_execution_task_pct": 96.7,
-          "tool_execution_all_tasks_pct": 97.0,
+          "tool_calls_succeeded": 66,
+          "tool_execution_success_pct": 98.5,
+          "tool_execution_task_pct": 98.4,
+          "tool_execution_all_tasks_pct": 98.5,
           "tool_selection_correct_count": 67,
           "tool_selection_correctness_pct": 100.0,
           "groundedness_count": 67,
@@ -1874,15 +1875,15 @@
           "chart_correctness_pct": 100.0,
           "complete_task_success_count": 67,
           "complete_task_success_pct": 100.0,
-          "tasks_with_retries": 2,
-          "retry_rate_pct": 3.0,
-          "total_retries": 2,
+          "tasks_with_retries": 1,
+          "retry_rate_pct": 1.5,
+          "total_retries": 1,
           "timeout_count": 0,
-          "latency_mean_s": 13.53,
-          "latency_p50_s": 11.06,
-          "latency_p95_s": 23.45,
-          "peak_host_ram_mb": 379.27,
-          "peak_vram_mb": 2341.0,
+          "latency_mean_s": 18.5,
+          "latency_p50_s": 14.86,
+          "latency_p95_s": 34.1,
+          "peak_host_ram_mb": 333.91,
+          "peak_vram_mb": 2337.0,
           "by_category": {
             "profiling": {
               "total": 6,
@@ -1957,7 +1958,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.3,
+              "latency_s": 13.87,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1965,7 +1966,7 @@
                 "get_statistical_summary"
               ],
               "figure_count": 0,
-              "answer_preview": "The dataset has:\n\n- **180 rows**  \n- **12 columns**  \n- **0 duplicate rows**  \n\nTotal missing cells: 23 (with `customer_age` having 14 missing values and `satisfaction_score` having 9).  \n\nCompleteness: 98.94%."
+              "answer_preview": "The dataset has:\n\n- **180 rows**  \n- **12 columns**  \n- **0 duplicate rows**  \n- **23 missing cells** (completeness: 98.94%)  \n\nMissing values are primarily in `customer_age` (14 missing) and `satisfaction_score` (9 miss"
             },
             {
               "id": "ecom_02_missing",
@@ -1983,7 +1984,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.73,
+              "latency_s": 12.83,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -1991,7 +1992,7 @@
                 "get_statistical_summary"
               ],
               "figure_count": 0,
-              "answer_preview": "The columns containing missing values and the number of missing values in each are:\n\n- **customer_age**: 14 missing values (7.78% of total entries)\n- **satisfaction_score**: 9 missing values (5.0% of total entries)\n\nNo o"
+              "answer_preview": "The columns containing missing values and their respective counts are:\n\n- **customer_age**: 14 missing values (7.78% of total entries)\n- **satisfaction_score**: 9 missing values (5.0% of total entries)\n\nNo other columns "
             },
             {
               "id": "ecom_03_filter",
@@ -2009,7 +2010,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.02,
+              "latency_s": 13.29,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2035,7 +2036,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.1,
+              "latency_s": 12.79,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2061,7 +2062,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 8.84,
+              "latency_s": 9.2,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2087,7 +2088,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 8.05,
+              "latency_s": 17.22,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2095,7 +2096,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 * IQR rule on the `revenue` column, there are **10 outlier rows** (5.56% of the total 180 rows)."
+              "answer_preview": "Using the 1.5 * IQR rule on the `revenue` column, there are **10 outlier rows** (5.56% of the total 180 rows). \n\nThe outliers are identified as revenue values exceeding the upper bound of 1,234.94. The sample outlier val"
             },
             {
               "id": "ecom_07_stat_test",
@@ -2113,7 +2114,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 24.75,
+              "latency_s": 26.56,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2121,7 +2122,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Kruskal-Wallis test comparing revenue across regions yields the following results:\n\n- **Test Statistic**: 1.098648  \n- **P-value**: 0.777401  \n- **Significant at \u03b1 = 0.05?**: No  \n\n### Group Summaries:\n- **East**: 37"
+              "answer_preview": "The Kruskal-Wallis test compares revenue across regional groups (East, North, South, West).  \n\n- **Test Statistic**: 1.098648  \n- **p-value**: 0.777401  \n- **Conclusion**: The result is **not significant** at the 0.05 al"
             },
             {
               "id": "ecom_08_chart",
@@ -2139,7 +2140,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 14.28,
+              "latency_s": 16.85,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2147,7 +2148,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The interactive Plotly bar chart showing **mean revenue by category** has been successfully created.  \n\n- **X-axis**: Category (Electronics, Home, Apparel, Beauty)  \n- **Y-axis**: Mean revenue (in dollars)  \n- **Aggregat"
+              "answer_preview": "The interactive Plotly bar chart showing **mean revenue by category** has been successfully created and is ready to display.  \n\n- **X-axis**: Category (Electronics, Home, Apparel, Beauty)  \n- **Y-axis**: Mean revenue (in"
             },
             {
               "id": "ecom_09_mt1",
@@ -2165,7 +2166,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.4,
+              "latency_s": 8.27,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2173,7 +2174,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The region with the highest total revenue is **West**, with a sum of **$27,209.00**."
+              "answer_preview": "The region with the highest total revenue is **West**, with a sum of **27,209.0**."
             },
             {
               "id": "ecom_10_mt2",
@@ -2191,12 +2192,11 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 27.34,
+              "latency_s": 10.85,
               "retries": 0,
-              "tool_calls": 2,
+              "tool_calls": 1,
               "tool_errors": 0,
               "tools_used": [
-                "aggregate_data",
                 "aggregate_data"
               ],
               "figure_count": 0,
@@ -2218,7 +2218,7 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 4.07,
+              "latency_s": 4.53,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
@@ -2242,7 +2242,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 15.46,
+              "latency_s": 16.0,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2250,7 +2250,7 @@
                 "get_statistical_summary"
               ],
               "figure_count": 0,
-              "answer_preview": "The dataset has:\n\n- **344 rows**  \n- **7 columns**  \n- **19 total missing cells** (completeness: 99.21%)  \n- **0 duplicate rows**  \n\nMissing values are distributed across the following columns:  \n- `sex`: 11 missing valu"
+              "answer_preview": "The dataset has:\n\n- **344 rows**  \n- **7 columns**  \n- **19 total missing cells** (with 11 missing in the `sex` column and 2 each in `bill_length_mm`, `bill_depth_mm`, `flipper_length_mm`, and `body_mass_g`)  \n\nCompleten"
             },
             {
               "id": "peng_02_missing",
@@ -2268,7 +2268,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 5.71,
+              "latency_s": 6.21,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2294,7 +2294,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.35,
+              "latency_s": 13.29,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2320,7 +2320,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.82,
+              "latency_s": 12.29,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2346,7 +2346,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.38,
+              "latency_s": 11.49,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2354,7 +2354,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Pearson correlation coefficient between `flipper_length_mm` and `body_mass_g` is **0.8712**, based on 342 complete pairs of data (excluding 2 rows with missing values). The correlation is statistically significant at"
+              "answer_preview": "The Pearson correlation coefficient between `flipper_length_mm` and `body_mass_g` is **0.871**, based on 342 complete pairs of data (excluding 2 rows with missing values). The correlation is statistically significant at "
             },
             {
               "id": "peng_06_outliers",
@@ -2372,7 +2372,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.06,
+              "latency_s": 11.17,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2380,7 +2380,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 \u00d7 IQR rule, there are **0 outlier values** in the `bill_depth_mm` column. \n\n- Interquartile range (IQR): 3.1 mm  \n- Lower bound: 10.95 mm  \n- Upper bound: 23.35 mm  \nAll values within `bill_depth_mm` fall w"
+              "answer_preview": "Using the 1.5 \u00d7 IQR rule on `bill_depth_mm`, there are **0 outlier values**.  \n\n- Interquartile range (IQR): 3.1 mm  \n- Lower bound: 10.95 mm  \n- Upper bound: 23.35 mm  \nAll data points within `bill_depth_mm` fall within"
             },
             {
               "id": "peng_07_stat_test",
@@ -2398,7 +2398,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 18.05,
+              "latency_s": 18.86,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2406,7 +2406,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The one-way ANOVA test comparing body_mass_g across species groups yields the following results:\n\n- **F-statistic**: 343.63  \n- **p-value**: 0.0 (i.e., statistically significant at \u03b1 = 0.05)  \n\nThis indicates a significa"
+              "answer_preview": "The one-way ANOVA test comparing `body_mass_g` across species groups reveals:\n\n- **F-statistic**: 343.63  \n- **p-value**: 0.0 (i.e., statistically significant at \u03b1 = 0.05)  \n\nThis indicates a significant difference in bo"
             },
             {
               "id": "peng_08_chart",
@@ -2424,7 +2424,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 20.42,
+              "latency_s": 19.93,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2432,7 +2432,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The scatter plot of **flipper_length_mm** (X-axis) versus **body_mass_g** (Y-axis), colored by **species**, has been successfully created.\n\n- **Title**: Flipper Length vs Body Mass by Species  \n- **X-axis range**: 172.0 "
+              "answer_preview": "The scatter plot of **flipper_length_mm** (X-axis) versus **body_mass_g** (Y-axis), colored by **species**, has been successfully created.  \n\n- **Total rows**: 344  \n- **Rows considered**: 344  \n- **Rows excluded**: 2 (d"
             },
             {
               "id": "peng_09_mt1",
@@ -2450,7 +2450,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.41,
+              "latency_s": 10.91,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2476,7 +2476,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.58,
+              "latency_s": 11.57,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2484,7 +2484,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "For the island with the most penguins, **Biscoe**, the mean bill_length_mm is **45.26 mm**."
+              "answer_preview": "For the island with the most penguins, **Biscoe**, the mean bill length is **45.26 mm**."
             },
             {
               "id": "peng_11_invalid",
@@ -2502,13 +2502,13 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.15,
+              "latency_s": 21.36,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
               "tools_used": [],
               "figure_count": 0,
-              "answer_preview": "The column \"nonexistent_feather_weight\" does not exist in the dataset. I cannot perform a Pearson correlation with a non-existent column. Please confirm the correct column name or provide valid input."
+              "answer_preview": "The column \"nonexistent_feather_weight\" does not exist in the dataset. I cannot perform a Pearson correlation with a non-existent column. Please verify the column name or provide a valid column from the dataset: ['specie"
             },
             {
               "id": "bc_01_profile",
@@ -2526,7 +2526,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.9,
+              "latency_s": 14.44,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2534,7 +2534,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The dataset contains a total of 569 records, distributed as follows by diagnosis group:\n\n- **Benign**: 357 records  \n- **Malignant**: 212 records  \n\nThis indicates that the majority of the cases are classified as benign."
+              "answer_preview": "The dataset contains 569 records distributed as follows by diagnosis group:\n\n- **Benign**: 357 records  \n- **Malignant**: 212 records  \n\nThis indicates that the majority of the cases are classified as benign."
             },
             {
               "id": "bc_02_agg",
@@ -2552,15 +2552,16 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 13.3,
+              "latency_s": 17.89,
               "retries": 0,
-              "tool_calls": 1,
+              "tool_calls": 2,
               "tool_errors": 0,
               "tools_used": [
+                "aggregate_data",
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean of 'mean area' grouped by diagnosis is as follows:\n\n- For **malignant**: 978.38 (mean)\n- For **benign**: 462.79 (mean)\n\nThe difference in mean area between malignant and benign cases is **515.59** (978.38 \u2212 462."
+              "answer_preview": "The mean of 'mean area' is:\n\n- **978.38** for malignant tumors (based on 212 rows).\n- **462.79** for benign tumors (based on 357 rows).\n\nThis indicates that malignant tumors have a significantly larger mean area compared"
             },
             {
               "id": "bc_03_filter",
@@ -2578,7 +2579,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.84,
+              "latency_s": 12.67,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2598,13 +2599,13 @@
               "tool_execution_success": true,
               "tool_selection_correct": true,
               "grounded": true,
-              "numeric_grounding_ratio": 1.0,
+              "numeric_grounding_ratio": 0.8,
               "chart_correct": null,
               "complete_task_success": true,
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.27,
+              "latency_s": 11.55,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2612,7 +2613,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Pearson correlation between 'mean radius' and 'mean perimeter' is **0.997855**, indicating a very strong positive linear relationship. This correlation is statistically significant at the 0.05 level (p-value = 0.0)."
+              "answer_preview": "The Pearson correlation between 'mean radius' and 'mean perimeter' is **0.9979** (rounded to 4 decimal places), based on 569 complete pairs of data. The p-value is 0.0, indicating a statistically significant positive lin"
             },
             {
               "id": "bc_05_outliers",
@@ -2630,7 +2631,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.77,
+              "latency_s": 15.21,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2638,7 +2639,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 * IQR rule on the 'mean area' column, there are **25 outlier rows**."
+              "answer_preview": "Using the 1.5 * IQR rule on the 'mean area' column, there are **25 outlier rows**.  \n\nThese outliers are values exceeding the upper bound of 1326.3, with sample values including 1404.0, 1878.0, 1509.0, and others. The ou"
             },
             {
               "id": "bc_06_stat_test",
@@ -2656,7 +2657,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 20.33,
+              "latency_s": 28.19,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2664,7 +2665,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Mann-Whitney U test comparing 'mean concavity' between diagnosis groups 'malignant' and 'benign' yields the following results:\n\n- **Test Statistic**: 4705.5  \n- **p-value**: 0.0 (indicating statistical significance a"
+              "answer_preview": "The Mann-Whitney U test comparing *mean concavity* between diagnosis groups reveals:\n\n- **Test Statistic**: 4705.5  \n- **p-value**: 0.0 (exactly 0, indicating statistical significance at \u03b1 = 0.05)  \n- **Result**: Signifi"
             },
             {
               "id": "bc_07_chart",
@@ -2682,7 +2683,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 16.04,
+              "latency_s": 18.79,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2690,7 +2691,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The box plot has been successfully created, showing the distribution of **mean radius** across different **diagnosis** groups.  \n\n- **X-axis**: Diagnosis (likely benign or malignant, based on the dataset).  \n- **Y-axis**"
+              "answer_preview": "The box plot has been successfully created, showing the distribution of **mean radius** across different **diagnosis** groups.  \n\n- **X-axis**: Diagnosis (likely benign or malignant based on the dataset).  \n- **Y-axis**:"
             },
             {
               "id": "bc_08_multistep",
@@ -2708,15 +2709,16 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 15.85,
+              "latency_s": 22.09,
               "retries": 0,
-              "tool_calls": 1,
+              "tool_calls": 2,
               "tool_errors": 0,
               "tools_used": [
+                "aggregate_data",
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean 'worst area' for benign diagnosis is 558.90, and for malignant diagnosis, it is 1422.29.\n\nThe ratio (malignant mean / benign mean) is:\n\n1422.286321 / 558.89944 \u2248 2.545.\n\nThus, the ratio is **2.545**."
+              "answer_preview": "The mean 'worst area' for malignant diagnosis is 1422.29, and for benign diagnosis is 558.90.  \n\nThe ratio (malignant mean / benign mean) is:  \n1422.29 / 558.90 \u2248 **2.546**."
             },
             {
               "id": "bc_09_mt1",
@@ -2734,7 +2736,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.54,
+              "latency_s": 11.73,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2742,7 +2744,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The median value of 'worst radius' for cases diagnosed as 'malignant' is **20.59**. This result is based on 212 rows in the dataset that satisfy the condition `diagnosis == 'malignant'`."
+              "answer_preview": "The median value of 'worst radius' for cases where diagnosis is 'malignant' is **20.59**. This result is based on 212 rows in the dataset that satisfy the condition `diagnosis == 'malignant'`."
             },
             {
               "id": "bc_10_mt2",
@@ -2760,7 +2762,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.16,
+              "latency_s": 24.54,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2768,7 +2770,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The median value of 'worst radius' for cases diagnosed as 'benign' is **13.35**.  \n\n**Comparison**:  \n- Malignant: median worst radius = **20.59**  \n- Benign: median worst radius = **13.35**  \n\nThis indicates that malign"
+              "answer_preview": "The median value of 'worst radius' for cases where diagnosis is 'benign' is **13.35**.  \n\nComparison with 'malignant':  \n- Malignant: median = **20.59**  \n- Benign: median = **13.35**  \n\nThis indicates that malignant tum"
             },
             {
               "id": "bc_11_invalid",
@@ -2786,13 +2788,13 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.32,
+              "latency_s": 6.47,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
               "tools_used": [],
               "figure_count": 0,
-              "answer_preview": "The column 'biopsy_stage_missing_col' does not exist in the dataset. The available columns are as listed in the ACTIVE DATASET PROFILE, and 'biopsy_stage_missing_col' is not among them. Please verify the column name or p"
+              "answer_preview": "The column 'biopsy_stage_missing_col' does not exist in the dataset. The available columns are as listed in the ACTIVE DATASET PROFILE. Please verify the column name and try again with an existing column name."
             },
             {
               "id": "wine_01_profile",
@@ -2810,7 +2812,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.53,
+              "latency_s": 14.86,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2818,7 +2820,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The wine samples are distributed across the cultivar classes as follows:\n\n- **class_1**: 71 samples  \n- **class_0**: 59 samples  \n- **class_2**: 48 samples  \n\nThis accounts for all 178 wine samples in the dataset."
+              "answer_preview": "There are a total of 178 wine samples, distributed across three cultivar classes as follows:\n\n- **class_1**: 71 samples  \n- **class_0**: 59 samples  \n- **class_2**: 48 samples  \n\nThis distribution is derived from the ful"
             },
             {
               "id": "wine_02_agg",
@@ -2836,7 +2838,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.75,
+              "latency_s": 13.87,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2853,7 +2855,7 @@
               "turn_index": 1,
               "correct": true,
               "final_answer_correct": true,
-              "tool_execution_success": false,
+              "tool_execution_success": true,
               "tool_selection_correct": true,
               "grounded": true,
               "numeric_grounding_ratio": 1.0,
@@ -2862,16 +2864,15 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 15.92,
-              "retries": 1,
-              "tool_calls": 2,
-              "tool_errors": 1,
+              "latency_s": 12.52,
+              "retries": 0,
+              "tool_calls": 1,
+              "tool_errors": 0,
               "tools_used": [
-                "aggregate_data",
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "There are **19** wines that have alcohol \u2265 14.0 and color intensity > 5.0."
+              "answer_preview": "There are **19 wines** that satisfy both conditions: alcohol \u2265 14.0 and color_intensity > 5.0."
             },
             {
               "id": "wine_04_corr",
@@ -2889,7 +2890,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.31,
+              "latency_s": 17.48,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2897,7 +2898,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Spearman correlation between **total_phenols** and **flavanoids** is **0.8794**, based on 178 complete pairs of data. This indicates a very strong positive monotonic relationship between the two variables. The p-valu"
+              "answer_preview": "The Spearman correlation between **total_phenols** and **flavanoids** is **0.879**, based on 178 complete pairs of data. The p-value is **0.0**, indicating a statistically significant positive monotonic relationship at t"
             },
             {
               "id": "wine_05_outliers",
@@ -2915,7 +2916,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.18,
+              "latency_s": 24.22,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2923,7 +2924,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 * IQR rule, **3 rows** are detected as outliers in the `malic_acid` column. These outlier values are [5.8, 5.51, 5.65]."
+              "answer_preview": "Using the 1.5 * IQR rule on the `malic_acid` column, **3 outlier rows** are detected.  \n\n- **Lower bound**: -0.6175  \n- **Upper bound**: 5.3025  \n- The outlier values are: **5.8, 5.51, and 5.65** (all above the upper bou"
             },
             {
               "id": "wine_06_kruskal",
@@ -2941,7 +2942,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 29.41,
+              "latency_s": 36.71,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2949,7 +2950,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Kruskal-Wallis test compares alcohol levels across three cultivar groups (\"class_0\", \"class_1\", and \"class_2\") and reveals a statistically significant difference in alcohol content (p-value = 0.0, which is less than "
+              "answer_preview": "The Kruskal-Wallis test compares alcohol levels across three cultivar groups (\"class_0\", \"class_1\", \"class_2\") and reveals a statistically significant difference in alcohol content (p-value = 0.0, which is less than the "
             },
             {
               "id": "wine_07_normality",
@@ -2967,7 +2968,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 16.38,
+              "latency_s": 19.2,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -2975,7 +2976,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The normality test for the \"proline\" column using the Shapiro-Wilk test yields the following results:\n\n- **Test Statistic**: 0.931186  \n- **p-value**: 0.0 (exactly 0)  \n- **Conclusion**: The distribution is **not normal*"
+              "answer_preview": "The normality test for the \"proline\" column using the Shapiro-Wilk test yields the following results:\n\n- **Sample size**: 178  \n- **Test statistic**: 0.931186  \n- **p-value**: 0.0 (exactly 0)  \n- **Conclusion**: The dist"
             },
             {
               "id": "wine_08_chart",
@@ -2993,7 +2994,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 105.88,
+              "latency_s": 147.71,
               "retries": 0,
               "tool_calls": 2,
               "tool_errors": 0,
@@ -3002,7 +3003,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The heatmap has been successfully generated, visualizing the relationship between wine chemical properties\u2014specifically alcohol, malic acid, and proanthocyanins\u2014across all 178 wine samples. \n\n- **X-axis**: Alcohol conten"
+              "answer_preview": "The heatmap of **Alcohol vs. Malic Acid by Cultivar** has been successfully generated and rendered. It visualizes the relationship between alcohol content and malic acid levels across all 178 wine samples, with each cell"
             },
             {
               "id": "wine_09_mt1",
@@ -3020,7 +3021,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.58,
+              "latency_s": 10.89,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3028,7 +3029,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The cultivar with the lowest mean flavanoids is **class_2**, with a mean value of **0.781458**."
+              "answer_preview": "The cultivar with the lowest mean flavanoids is **class_2**, with a mean flavanoids value of **0.781**."
             },
             {
               "id": "wine_10_mt2",
@@ -3046,7 +3047,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.76,
+              "latency_s": 8.8,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3054,7 +3055,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean color_intensity for the cultivar **class_2** is **7.39625**."
+              "answer_preview": "The mean color_intensity for the cultivar **class_2** is **7.396**."
             },
             {
               "id": "wine_11_invalid",
@@ -3072,13 +3073,13 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 16.29,
+              "latency_s": 19.2,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
               "tools_used": [],
               "figure_count": 0,
-              "answer_preview": "I cannot plot a histogram of 'sugar_residual_g_l' because this column does not exist in the dataset. The available columns are as listed in the dataset profile. If you have any other column or query, please let me know!"
+              "answer_preview": "I cannot plot a histogram of 'sugar_residual_g_l' because this column does not exist in the dataset. The available columns are as listed in the dataset profile. If you have any other questions or need assistance with a v"
             },
             {
               "id": "macro_01_profile",
@@ -3096,7 +3097,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 12.74,
+              "latency_s": 16.72,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3104,7 +3105,7 @@
                 "get_statistical_summary"
               ],
               "figure_count": 0,
-              "answer_preview": "The macroeconomic dataset contains:\n\n- **203 rows** (observations)  \n- **14 columns** (variables)  \n- **0 missing cells** (completeness: 100.0%)  \n- **0 duplicate rows**  \n\nThis indicates a complete and clean dataset wit"
+              "answer_preview": "The macroeconomic dataset contains:\n\n- **203 rows**  \n- **14 columns**  \n- **0 missing cells** (completeness: 100.0%)  \n- **0 duplicate rows**  \n\nThis indicates a complete and clean dataset with no missing or redundant e"
             },
             {
               "id": "macro_02_filter",
@@ -3122,7 +3123,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 16.36,
+              "latency_s": 23.97,
               "retries": 1,
               "tool_calls": 2,
               "tool_errors": 1,
@@ -3131,7 +3132,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "There were **16 quarters** with an unemployment rate (unemp) >= 8.0."
+              "answer_preview": "There were **16 quarters** in the dataset where the unemployment rate (unemp) was greater than or equal to 8.0."
             },
             {
               "id": "macro_03_agg",
@@ -3149,7 +3150,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.41,
+              "latency_s": 9.2,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3175,7 +3176,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.05,
+              "latency_s": 15.51,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3183,7 +3184,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Spearman correlation between realgdp and cpi is **0.999006**, based on 203 complete pairs of data. This indicates a very strong monotonic positive relationship between the two variables. The p-value is 0.0, which is "
+              "answer_preview": "The Spearman correlation between realgdp and cpi is **0.9990**, based on 203 complete pairs of data. The p-value is **0.0**, indicating a statistically significant positive monotonic relationship at the 0.05 significance"
             },
             {
               "id": "macro_05_outliers",
@@ -3201,7 +3202,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.51,
+              "latency_s": 28.37,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3209,7 +3210,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 * IQR rule on the `infl` column, there are **22 outlier quarters**. \n\nThis corresponds to **10.837%** of the data (out of 203 non-null values), with sample outlier values including 9.26, 12.47, 10.39, and o"
+              "answer_preview": "Using the 1.5 * IQR rule on the `infl` column, there are **22 outlier quarters**.  \n\nThese outliers fall outside the range defined by the first quartile (Q1 = 2.27) and third quartile (Q3 = 4.975), with an interquartile "
             },
             {
               "id": "macro_06_normality",
@@ -3227,7 +3228,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 14.79,
+              "latency_s": 33.41,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3235,7 +3236,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The normality test for the `unemp` column using the Shapiro-Wilk test yields the following results:\n\n- **Test Statistic**: 0.95736  \n- **p-value**: 9 \u00d7 10\u207b\u2076  \n- **Is the distribution normal at \u03b1 = 0.05?**: No  \n\nThe p-va"
+              "answer_preview": "The normality test for the `unemp` column (unemployment rate) using the Shapiro-Wilk test yields the following results:\n\n- **Sample size**: 203  \n- **Test statistic**: 0.95736  \n- **p-value**: 9 \u00d7 10\u207b\u2076 (0.000009)  \n- **I"
             },
             {
               "id": "macro_07_chart",
@@ -3253,7 +3254,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.1,
+              "latency_s": 34.56,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3261,7 +3262,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The histogram of `tbilrate` has been successfully created and rendered. It displays the distribution of the Treasury bill rate across 203 data points, spanning from a minimum value of 0.12 to a maximum of 15.33. The full"
+              "answer_preview": "- **chart_kind**: histogram  \n- **x**: tbilrate  \n- **y**: null  \n- **rows_total**: 203  \n- **rows_considered**: 203  \n- **rows_plotted**: 203  \n- **rows_excluded**: 0  \n- **points_rendered**: 203  \n- **x_range**: [\"0.12"
             },
             {
               "id": "macro_08_multistep",
@@ -3279,7 +3280,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 15.76,
+              "latency_s": 30.29,
               "retries": 0,
               "tool_calls": 2,
               "tool_errors": 0,
@@ -3288,7 +3289,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean unemployment rate (unemp) for quarters with year < 2000 is **5.996**, while for quarters with year >= 2000, it is **5.415**. \n\nThus, the mean unemployment rate was higher in the period before 2000 compared to th"
+              "answer_preview": "The mean unemployment rate (unemp) for quarters with year \u2265 2000 is **5.415**.  \nThe mean unemployment rate (unemp) for quarters with year < 2000 is **5.996**.  \n\nThus, the mean unemployment rate decreased from **5.996**"
             },
             {
               "id": "macro_09_mt1",
@@ -3306,7 +3307,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 12.22,
+              "latency_s": 15.95,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3314,7 +3315,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean real GDP for quarters with year \u2265 2000 is **12,319.57** (rounded to two decimal places).  \n\nThis calculation is based on 39 rows (quarters) from the dataset where the year is 2000 or later. No missing values wer"
+              "answer_preview": "The mean real GDP for quarters with year \u2265 2000 is **12,319.57** (in billions of 2005 dollars). This calculation is based on 39 rows (quarters) from the dataset where the year is 2000 or later."
             },
             {
               "id": "macro_10_mt2",
@@ -3332,7 +3333,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 14.16,
+              "latency_s": 13.32,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3340,7 +3341,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The maximum unemployment rate (unemp) for quarters with year \u2265 2000 is **9.6**.  \n\nThis value is derived from 39 rows (quarters) in the dataset where the year is 2000 or later. No missing values were excluded, and the fi"
+              "answer_preview": "The maximum unemployment rate (unemp) for quarters with year \u2265 2000 is **9.6%**. This value is observed across 39 rows (quarters) in the dataset."
             },
             {
               "id": "macro_11_invalid",
@@ -3358,13 +3359,13 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 13.49,
+              "latency_s": 21.26,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,
               "tools_used": [],
               "figure_count": 0,
-              "answer_preview": "The column \"nonexistent_bitcoin_price\" does not exist in the dataset. Therefore, no correlation can be computed. I will not proceed with any tool calls for this invalid request."
+              "answer_preview": "The column \"nonexistent_bitcoin_price\" does not exist in the dataset. Available columns are: ['year', 'quarter', 'realgdp', 'realcons', 'realinv', 'realgovt', 'realdpi', 'cpi', 'm1', 'tbilrate', 'unemp', 'pop', 'infl', '"
             },
             {
               "id": "co2_01_profile",
@@ -3382,7 +3383,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.95,
+              "latency_s": 9.88,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3408,7 +3409,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.12,
+              "latency_s": 7.26,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3434,7 +3435,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 6.6,
+              "latency_s": 12.17,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3442,7 +3443,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "There are **356 rows** in the dataset where `co2 > 360`."
+              "answer_preview": "There are **356 rows** where `co2 > 360`."
             },
             {
               "id": "co2_04_agg",
@@ -3460,7 +3461,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 12.33,
+              "latency_s": 14.86,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3486,7 +3487,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 10.51,
+              "latency_s": 15.21,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3494,7 +3495,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The Pearson correlation coefficient between `year` and `co2` is **0.988239**, based on 2,225 complete pairs of data (excluding 59 rows with missing `co2` values). The p-value is 0.0, indicating a statistically significan"
+              "answer_preview": "The Pearson correlation coefficient between `year` and `co2` is **0.988**, based on 2,225 complete pairs of data (excluding 59 rows with missing values). The p-value is 0.0, indicating a statistically significant positiv"
             },
             {
               "id": "co2_06_outliers",
@@ -3512,7 +3513,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 11.79,
+              "latency_s": 14.4,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3520,7 +3521,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "Using the 1.5 \u00d7 IQR rule, no outlier rows exist in the `co2` column.  \n\n- Interquartile range (IQR): 30.0  \n- Lower bound: 279.8  \n- Upper bound: 399.8  \n- Outlier count: **0**  \n- Outlier percentage: **0.0%**  \n\nAll val"
+              "answer_preview": "Using the 1.5 \u00d7 IQR rule, no outlier rows exist in the `co2` column.  \n\n- Interquartile range (IQR): 30.0  \n- Lower bound: 279.8  \n- Upper bound: 399.8  \n- Outlier count: 0  \n- Outlier percentage: 0.0%  \n\nAll values in t"
             },
             {
               "id": "co2_07_normality",
@@ -3538,7 +3539,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 17.36,
+              "latency_s": 20.43,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3546,7 +3547,7 @@
                 "compute_statistical_test"
               ],
               "figure_count": 0,
-              "answer_preview": "The normality test for the `co2` column using the Shapiro-Wilk test yields the following results:\n\n- **Test statistic**: 0.945132  \n- **p-value**: 0.0 (exactly 0)  \n- **Conclusion**: The data is **not normally distribute"
+              "answer_preview": "The normality test for the `co2` column using the Shapiro-Wilk test yields the following results:\n\n- **Test Statistic**: 0.945132  \n- **p-value**: 0.0 (exactly 0)  \n- **Conclusion**: The data is **not normally distribute"
             },
             {
               "id": "co2_08_chart",
@@ -3564,7 +3565,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 19.23,
+              "latency_s": 34.4,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3572,7 +3573,7 @@
                 "create_standard_chart"
               ],
               "figure_count": 1,
-              "answer_preview": "The Plotly line chart has been successfully created, plotting CO\u2082 levels over time from the `date` column.  \n\n**Chart Details:**  \n- **Title:** CO2 Levels Over Time  \n- **X-axis:** Date (range: 1958-03-29 to 2001-12-29) "
+              "answer_preview": "The Plotly line chart has been successfully created, plotting CO\u2082 levels over time from the `date` column against the `co2` column.  \n\n- **Title**: CO2 Levels Over Time  \n- **X-axis**: Date (range: 1958-03-29 to 2001-12-"
             },
             {
               "id": "co2_09_multistep",
@@ -3590,7 +3591,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 19.26,
+              "latency_s": 25.16,
               "retries": 0,
               "tool_calls": 2,
               "tool_errors": 0,
@@ -3599,7 +3600,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean CO\u2082 level for the year 2000 is **369.35**.  \nThe mean CO\u2082 level for the year 1960 is **316.86**.  \n\nThe difference (2000 minus 1960) is:  \n369.35 - 316.86 = **52.49**.  \n\nThus, the mean CO\u2082 level increased by **"
+              "answer_preview": "The mean CO\u2082 level for the year 2000 is 369.35.  \nThe mean CO\u2082 level for the year 1960 is 316.86.  \nThe difference (2000 minus 1960) is:  \n369.35 - 316.86 = 52.49."
             },
             {
               "id": "co2_10_mt1",
@@ -3617,7 +3618,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.28,
+              "latency_s": 10.71,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3625,7 +3626,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "For the year 1990, the mean CO\u2082 level is **354.14**. This value is computed from 52 rows in the dataset that match the condition `year == 1990`."
+              "answer_preview": "For the year 1990, the mean CO\u2082 level is **354.14**. This result is based on 52 rows matching the filter `year == 1990`."
             },
             {
               "id": "co2_11_mt2",
@@ -3643,7 +3644,7 @@
               "reason": "ok",
               "status": "success",
               "timed_out": false,
-              "latency_s": 9.3,
+              "latency_s": 14.77,
               "retries": 0,
               "tool_calls": 1,
               "tool_errors": 0,
@@ -3651,7 +3652,7 @@
                 "aggregate_data"
               ],
               "figure_count": 0,
-              "answer_preview": "The mean CO\u2082 level in 1960 is **316.86**.  \n\nComparing this with the mean CO\u2082 in 1990 (**354.14**), the CO\u2082 level increased by **37.28** units, or a **11.77%** rise. This indicates a notable increase in atmospheric CO\u2082 o"
+              "answer_preview": "For the year 1960, the mean CO\u2082 level is **316.86**.  \n\nComparing with 1990:  \n- 1960: mean CO\u2082 = **316.86**  \n- 1990: mean CO\u2082 = **354.14**  \n\nThe mean CO\u2082 level increased by **37.28** units from 1960 to 1990."
             },
             {
               "id": "co2_12_invalid",
@@ -3669,7 +3670,7 @@
               "reason": "ok_error_handled",
               "status": "success",
               "timed_out": false,
-              "latency_s": 7.33,
+              "latency_s": 9.49,
               "retries": 0,
               "tool_calls": 0,
               "tool_errors": 0,

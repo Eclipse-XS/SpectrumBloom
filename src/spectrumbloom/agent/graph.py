@@ -79,6 +79,23 @@ _INVALID_COL_ANSWER_RE = re.compile(
     r"|\bcolumn\b[^.!?\n]{0,40}\b(?:does not exist|not exist|not found|not in the dataset)\b",
     re.IGNORECASE,
 )
+_COMPARATIVE_BETWEEN_RE = re.compile(
+    r"\b(?:difference|ratio|compar(?:e|ing|ison)|contrast|gap|delta)\b[^.!?\n]{0,48}\bbetween\b",
+    re.IGNORECASE,
+)
+_RANGE_CUE_RE = re.compile(
+    r"(?:>=|<=|(?<![a-z])>|(?<![a-z])<|≥|≤|"
+    r"\b(?:at least|at most|more than|less than|fewer than|greater than|higher than|"
+    r"lower than|older than|younger than|newer than|earlier than|later than|"
+    r"no less than|no more than|exceed(?:s|ing)?|on or after|on or before|"
+    r"above|below|beyond)\b|"
+    r"\b(?:after|before|since|until|prior to)\s+(?:\w+\s+){0,2}-?\d|"
+    r"\b(?:over|under)\s+(?:\$?\s*-?\d|the\b)|"
+    r"\bfrom\s+-?\d[\d.,]*\s+(?:to|through|thru|onward|onwards|until)\b|"
+    r"\bbetween\b|"
+    r"\d+\s*\+)",
+    re.IGNORECASE,
+)
 _NUM_TOKEN_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
 
 
@@ -254,20 +271,127 @@ def _check_filter_operator_fidelity(query: str, args: dict[str, Any]) -> str | N
     return None
 
 
+def _value_in_text(value: Any, text: str) -> bool:
+    """Return True if a filter scalar/label appears in text by word/numeric boundary."""
+    if value is None or isinstance(value, bool):
+        return True
+    text_low = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text.lower())
+    cand_pats: list[str] = []
+    try:
+        num = float(str(value).replace(",", "").strip())
+        if num.is_integer():
+            cand_pats.append(rf"{int(num)}(?:\.0+)?")
+        else:
+            cand_pats.append(rf"{re.escape(f'{num:g}')}0*")
+    except (TypeError, ValueError):
+        pass
+    raw = str(value).strip().lower()
+    if raw:
+        cand_pats.append(re.escape(raw))
+    for pat in dict.fromkeys(cand_pats):
+        if pat and re.search(rf"(?<![\da-z_.]){pat}(?![\da-z_]|\.\d)", text_low):
+            return True
+    return False
+
+
+def _has_range_cue(text: str) -> bool:
+    """Return True if text has a range boundary cue (ignoring 'difference between')."""
+    if not text:
+        return False
+    cleaned = _COMPARATIVE_BETWEEN_RE.sub(" ", text)
+    return bool(_RANGE_CUE_RE.search(cleaned))
+
+
+def _collect_trace_operand_values(
+    traces: list[dict[str, Any]],
+    active_query: str = "",
+) -> list[float]:
+    """Extract primary metric scalars or query-matched group values from aggregate tool traces."""
+    vals: list[float] = []
+    for tr in traces:
+        if tr.get("error"):
+            continue
+        res = tr.get("result")
+        if not isinstance(res, dict):
+            continue
+        scalar = res.get("value")
+        if isinstance(scalar, (int, float)) and not isinstance(scalar, bool):
+            vals.append(float(scalar))
+            continue
+        mapping = res.get("mapping")
+        if isinstance(mapping, dict) and mapping:
+            if active_query:
+                matched = [
+                    float(v)
+                    for k, v in mapping.items()
+                    if isinstance(v, (int, float))
+                    and not isinstance(v, bool)
+                    and _value_in_text(k, active_query)
+                ]
+                if len(matched) >= 2:
+                    vals.extend(matched[:12])
+                    continue
+            for item in list(mapping.values())[:25]:
+                if isinstance(item, (int, float)) and not isinstance(item, bool):
+                    vals.append(float(item))
+            continue
+        groups = res.get("groups")
+        if isinstance(groups, list):
+            for row in groups[:25]:
+                if isinstance(row, dict):
+                    item = row.get("value")
+                    if isinstance(item, (int, float)) and not isinstance(item, bool):
+                        vals.append(float(item))
+    return vals
+
+
+def _num_present_in_text(target: float, text_nums: list[float]) -> bool:
+    tol = max(0.05, 0.002 * abs(target))
+    return any(abs(v - target) <= tol for v in text_nums)
+
+
+def _count_single_subset_aggregates(traces: list[dict[str, Any]]) -> tuple[int, bool]:
+    """Return (unique filtered single-subset query count, has_multi_group_result)."""
+    distinct_subsets: set[str] = set()
+    has_multi_group = False
+    for tr in traces:
+        if tr.get("error") or tr.get("tool") != "aggregate_data":
+            continue
+        res = tr.get("result")
+        if not isinstance(res, dict):
+            continue
+        total_groups = int(res.get("total_groups") or 0)
+        if total_groups >= 2:
+            has_multi_group = True
+        filters = res.get("filters_applied") or []
+        if filters and (
+            res.get("value") is not None or total_groups == 1 or res.get("rows_matched") == 0
+        ):
+            distinct_subsets.add(json.dumps(filters, sort_keys=True))
+    return len(distinct_subsets), has_multi_group
+
+
 def _check_spurious_filter(
     messages: list[BaseMessage],
     active_query: str,
     args: dict[str, Any],
 ) -> str | None:
-    """Reject hallucinated row filters (from example profile values) never requested in chat."""
+    """Reject hallucinated row filters or unrequested range thresholds not in conversation."""
     conv_parts: list[str] = []
+    tool_parts: list[str] = []
     for msg in messages:
         if isinstance(msg, HumanMessage):
             conv_parts.append(normalize_text(msg.content))
         elif isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
             conv_parts.append(normalize_text(msg.content))
-    conv_low = re.sub(r"[^a-z0-9]+", " ", " ".join(conv_parts).lower())
+        elif isinstance(msg, ToolMessage):
+            tool_parts.append(normalize_text(msg.content))
+    raw_conv_low = " ".join(conv_parts).lower()
+    conv_and_tools_low = " ".join([*conv_parts, *tool_parts]).lower()
+    conv_low = re.sub(r"[^a-z0-9]+", " ", raw_conv_low)
     active_low = (active_query or "").lower()
+    active_range_cue = _has_range_cue(active_low)
+    conv_range_cue = _has_range_cue(raw_conv_low)
 
     generic_tokens = {
         "mean",
@@ -325,6 +449,21 @@ def _check_spurious_filter(
                 "the full dataset with `filter_column=None, filter_op=None, filter_value=None` "
                 "(and `filter2_*=None`)."
             )
+
+        if op in {">", ">=", "<", "<="} and val is not None:
+            if not _value_in_text(val, conv_and_tools_low):
+                return (
+                    f"Unrequested range filter rejected ({col_k}='{col}', {op_k}='{op}', "
+                    f"{val_k}={val!r}): threshold '{val}' was not requested in the query or "
+                    "prior tool outputs. For exact-value comparisons, filter each target with "
+                    f"{op_k}='==' (or use {op_k}='in' / group_by=['{col}'])."
+                )
+            if not active_range_cue and (_value_in_text(val, active_low) or not conv_range_cue):
+                return (
+                    f"Unrequested range filter rejected ({col_k}='{col}', {op_k}='{op}', "
+                    f"{val_k}={val!r}): the query asks for exact value(s) rather than a "
+                    f"range boundary. Use {op_k}='==' per target or group_by=['{col}']."
+                )
     return None
 
 
@@ -550,35 +689,194 @@ class EDAAgentGraph:
                     )
             response = retry_chart
 
-        # If the user explicitly asked for a difference ("difference", "minus") or ratio ("ratio")
-        # and the draft final answer after tool execution omitted stating the difference or ratio,
-        # nudge once so the requested comparison value is explicitly calculated and reported.
+        # If the user explicitly asked for a difference/ratio between two values/groups, ensure
+        # both subsets were retrieved and that both operands plus the computed result are stated.
         if not getattr(response, "tool_calls", None) and turn_traces and not last_error:
             draft_text = normalize_text(getattr(response, "content", ""))
             q_low = active_query.lower()
             d_low = draft_text.lower()
-            asks_diff = bool(re.search(r"\b(?:difference|minus)\b", q_low))
-            asks_ratio = bool(re.search(r"\b(?:ratio)\b", q_low))
-            has_diff_word = bool(
-                re.search(r"\b(?:difference|minus|higher by|lower by|diff)\b", d_low)
+            asks_diff = bool(
+                re.search(
+                    r"\b(?:difference|minus|delta|gap|how much "
+                    r"(?:higher|lower|greater|larger|smaller|more|less))\b",
+                    q_low,
+                )
             )
-            has_ratio_word = bool(re.search(r"\b(?:ratio|times|x\s+higher|x\s+as)\b", d_low))
-            if (asks_diff and not has_diff_word) or (asks_ratio and not has_ratio_word):
-                missing_kind = "difference" if asks_diff else "ratio"
-                calc_nudge = [
-                    *prompt_messages,
-                    AIMessage(content=draft_text or ""),
-                    HumanMessage(
-                        content=(
-                            f"The user explicitly requested the numeric {missing_kind}. "
-                            f"Do not call any more tools. Using the exact values already in the "
-                            f"tool outputs above, compute and state both individual values AND "
-                            f"their exact numeric {missing_kind} clearly in your final response."
+            asks_ratio = bool(re.search(r"\b(?:ratio|divided\s+by)\b", q_low))
+            asks_compare = (
+                asks_diff or asks_ratio or bool(re.search(r"\b(?:compare|versus|vs\.?)\b", q_low))
+            )
+
+            dup_skipped_this_turn = any(
+                isinstance(m, ToolMessage) and "Duplicate tool call" in normalize_text(m.content)
+                for m in filtered[last_human_idx + 1 :]
+            )
+            prior_msgs = filtered[:last_human_idx] if last_human_idx > 0 else []
+            prior_nums = [
+                float(tok)
+                for m in prior_msgs
+                if isinstance(m, (ToolMessage, AIMessage))
+                for tok in _extract_numeric_tokens(normalize_text(m.content))
+                if tok
+            ]
+
+            if (
+                asks_compare
+                and not dup_skipped_this_turn
+                and state.get("step_count", 0) < MAX_TOOL_STEPS
+            ):
+                subset_cnt, has_multi_group = _count_single_subset_aggregates(turn_traces)
+                curr_ops = _collect_trace_operand_values(turn_traces, active_query)
+                draft_nums_pre = [float(tok) for tok in _extract_numeric_tokens(draft_text) if tok]
+                prior_paired_ok = (
+                    bool(prior_nums)
+                    and len(curr_ops) == 1
+                    and _num_present_in_text(curr_ops[0], draft_nums_pre)
+                    and any(
+                        _num_present_in_text(pv, draft_nums_pre)
+                        and (
+                            _num_present_in_text(abs(curr_ops[0] - pv), draft_nums_pre)
+                            if asks_diff
+                            else (
+                                (
+                                    _num_present_in_text(curr_ops[0] / pv, draft_nums_pre)
+                                    if abs(pv) > 1e-12
+                                    else False
+                                )
+                                or (
+                                    _num_present_in_text(pv / curr_ops[0], draft_nums_pre)
+                                    if abs(curr_ops[0]) > 1e-12
+                                    else False
+                                )
+                            )
+                            if asks_ratio
+                            else True
                         )
-                    ),
-                ]
-                retry_calc = self.chat_model.invoke(calc_nudge)
-                response = AIMessage(content=normalize_text(getattr(retry_calc, "content", "")))
+                        for pv in set(prior_nums)
+                        if abs(pv - curr_ops[0]) > 1e-9
+                    )
+                )
+                if (
+                    subset_cnt == 1
+                    and len(curr_ops) < 2
+                    and not has_multi_group
+                    and not prior_paired_ok
+                ):
+                    filter_hint = (
+                        "for the second requested subset"
+                        if _has_range_cue(active_query)
+                        else "for the second requested target value using `filter_op='=='`"
+                    )
+                    second_nudge = [
+                        *prompt_messages,
+                        AIMessage(content=draft_text or ""),
+                        HumanMessage(
+                            content=(
+                                "Only one subset has been retrieved for this comparison. "
+                                f"Call `aggregate_data` right now {filter_hint} "
+                                "before writing your final answer."
+                            )
+                        ),
+                    ]
+                    retry_second = self.model_with_tools.invoke(second_nudge)
+                    if not getattr(retry_second, "tool_calls", None):
+                        extracted2 = extract_tool_calls_with_fallback(retry_second)
+                        if extracted2:
+                            retry_second = AIMessage(
+                                content=normalize_text(getattr(retry_second, "content", "")),
+                                tool_calls=extracted2,
+                            )
+                    response = retry_second
+
+            if not getattr(response, "tool_calls", None) and (asks_diff or asks_ratio):
+                draft_text = normalize_text(getattr(response, "content", ""))
+                d_low = draft_text.lower()
+                has_diff_word = bool(
+                    re.search(r"\b(?:difference|minus|higher by|lower by|diff|delta)\b", d_low)
+                )
+                has_ratio_word = bool(re.search(r"\b(?:ratio|times|x\s+higher|x\s+as)\b", d_low))
+                draft_nums = [float(tok) for tok in _extract_numeric_tokens(draft_text) if tok]
+                operands = _collect_trace_operand_values(turn_traces, active_query)
+                missing_calc_num = False
+                if 2 <= len(operands) <= 12:
+                    distinct_ops = list(dict.fromkeys(operands))
+                    req_ops = min(2, len(distinct_ops))
+                    found_ops = sum(
+                        1 for val in distinct_ops if _num_present_in_text(val, draft_nums)
+                    )
+                    if asks_diff:
+                        pair_results = [
+                            diff_v
+                            for i in range(len(operands))
+                            for j in range(i + 1, len(operands))
+                            for diff_v in (
+                                operands[i] - operands[j],
+                                operands[j] - operands[i],
+                            )
+                        ]
+                    else:
+                        pair_results = [
+                            operands[i] / operands[j]
+                            for i in range(len(operands))
+                            for j in range(len(operands))
+                            if i != j and abs(operands[j]) > 1e-12
+                        ]
+                    has_result_num = any(_num_present_in_text(r, draft_nums) for r in pair_results)
+                    missing_calc_num = found_ops < req_ops or not has_result_num
+
+                if (asks_diff and (not has_diff_word or missing_calc_num)) or (
+                    asks_ratio and (not has_ratio_word or missing_calc_num)
+                ):
+                    missing_kind = "difference" if asks_diff else "ratio"
+                    calc_nudge = [
+                        *prompt_messages,
+                        AIMessage(content=draft_text or ""),
+                        HumanMessage(
+                            content=(
+                                f"The user explicitly requested the numeric {missing_kind}. "
+                                "Do not call any more tools. Using exact values from the tool "
+                                "outputs above, state BOTH operand values AND their exact numeric "
+                                f"{missing_kind} clearly in your final response."
+                            )
+                        ),
+                    ]
+                    retry_calc = self.chat_model.invoke(calc_nudge)
+                    response = AIMessage(content=normalize_text(getattr(retry_calc, "content", "")))
+
+            if not getattr(response, "tool_calls", None) and all(
+                tr.get("tool") == "create_standard_chart" for tr in turn_traces
+            ):
+                chart_draft = normalize_text(getattr(response, "content", ""))
+                draft_nums = [float(t) for t in _extract_numeric_tokens(chart_draft) if t]
+                if draft_nums:
+                    trace_texts = [json.dumps(tr, default=str) for tr in turn_traces]
+                    allowed_nums = prior_nums + [
+                        float(t)
+                        for src in [active_query, *trace_texts]
+                        for t in _extract_numeric_tokens(src)
+                        if t
+                    ]
+                    grounded_cnt = sum(
+                        1 for dn in draft_nums if _num_present_in_text(dn, allowed_nums)
+                    )
+                    if grounded_cnt / len(draft_nums) < 0.8:
+                        chart_nudge = [
+                            *prompt_messages,
+                            AIMessage(content=chart_draft),
+                            HumanMessage(
+                                content=(
+                                    "Do not call any tools. Summarize using ONLY the exact "
+                                    "fields and counts returned by `create_standard_chart` above "
+                                    "(such as chart_kind, x, y, agg_func, rows_plotted, "
+                                    "points_rendered, and groups_plotted). Never guess or "
+                                    "invent per-category values or unreturned summary numbers."
+                                )
+                            ),
+                        ]
+                        retry_chart = self.chat_model.invoke(chart_nudge)
+                        response = AIMessage(
+                            content=normalize_text(getattr(retry_chart, "content", ""))
+                        )
 
         return {
             "messages": [response],
@@ -841,10 +1139,35 @@ class EDAAgentGraph:
             )
 
             parts: list[str] = []
-            if stdout:
+            result_json = json.dumps(result_val, default=str) if result_val is not None else None
+            if stdout and (result_json is None or stdout.strip() != result_json.strip()):
                 parts.append(f"STDOUT:\n{stdout}")
-            if result_val is not None:
-                parts.append(f"RESULT:\n{json.dumps(result_val, default=str)}")
+            if result_json is not None:
+                parts.append(f"RESULT:\n{result_json}")
+            if (
+                name == "aggregate_data"
+                and not error_msg
+                and isinstance(result_val, dict)
+                and result_val.get("truncated_to_limit")
+                and isinstance(result_val.get("mapping"), dict)
+            ):
+                g_cols = result_val.get("group_by") or []
+                if len(g_cols) == 1 and g_cols[0] in df.columns:
+                    col_vals = df[g_cols[0]].dropna().unique()
+                    if len(col_vals) <= 500:
+                        map_keys = {str(k) for k in result_val["mapping"]}
+                        omitted = [
+                            v
+                            for v in col_vals
+                            if str(v) not in map_keys and _value_in_text(v, active_query)
+                        ]
+                        if omitted:
+                            parts.append(
+                                f"NOTE: Requested target value(s) {omitted[:5]} were omitted due "
+                                f"to group truncation. Call `aggregate_data` with "
+                                f"`filter_column={g_cols[0]!r}, filter_op='=='` for each omitted "
+                                "target value."
+                            )
             if figs:
                 labels = ", ".join(f.get("title", "Figure") for f in figs)
                 parts.append(f"FIGURES_GENERATED: {labels}")
@@ -857,8 +1180,9 @@ class EDAAgentGraph:
                 parts.append(f"ERROR:\n{error_msg}")
 
             content = "\n\n".join(parts) if parts else "Execution completed with no output."
-            if len(content) > 2200:
-                content = f"{content[:2150]}\n...[truncated for context budget]"
+            max_chars = 3400 if name == "aggregate_data" else 2200
+            if len(content) > max_chars:
+                content = f"{content[: max_chars - 50]}\n...[truncated for context budget]"
             tool_messages.append(ToolMessage(content=content, tool_call_id=tc_id, name=name))
 
         return {
